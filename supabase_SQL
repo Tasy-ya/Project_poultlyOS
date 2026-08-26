@@ -1,0 +1,194 @@
+-- ============================================================
+-- PoultlyOS — Database Schema
+-- รวบรวมจากทุกหน้าที่ออกแบบไว้ (Admin 2.1–2.10, Staff POS 1.1–1.8)
+-- แต่ละตารางมีคอมเมนต์บอกว่าใช้ในหน้าไหนบ้าง เพื่อให้ตรวจสอบย้อนกลับได้ง่าย
+-- ============================================================
+
+-- ----------------------------------------------------------------
+-- 1. สาขา — ใช้แทบทุกหน้า (ตัวกรองสาขาบน Dashboard, รายงาน, สต็อก, พนักงาน)
+-- ----------------------------------------------------------------
+CREATE TABLE branches (
+    id            SERIAL PRIMARY KEY,
+    name          VARCHAR(100) NOT NULL,          -- เช่น "สาขา 1"
+    address       VARCHAR(255)
+);
+
+-- ----------------------------------------------------------------
+-- 2. ข้อมูลร้าน (ค่าเดียวทั้งระบบ) — หน้า 2.10 ตั้งค่าระบบ, ใช้พิมพ์ใบเสร็จหน้า 1.5
+-- ----------------------------------------------------------------
+CREATE TABLE shop_settings (
+    id            SERIAL PRIMARY KEY,
+    shop_name     VARCHAR(255) NOT NULL,
+    address       VARCHAR(255),
+    tax_id        VARCHAR(50),
+    logo_url      VARCHAR(255)
+);
+
+-- ----------------------------------------------------------------
+-- 3. พนักงาน — หน้า 2.6 จัดการพนักงาน, 2.10 บัญชี/PIN, 1.1 ล็อกอิน
+-- ----------------------------------------------------------------
+CREATE TABLE staff (
+    id            SERIAL PRIMARY KEY,
+    name          VARCHAR(100) NOT NULL,
+    position      VARCHAR(20) NOT NULL CHECK (position IN ('sales', 'prep')),  -- พนักงานขาย / พนักงานหมัก-จัดสต็อก
+    branch_id     INTEGER NOT NULL REFERENCES branches(id),
+    daily_wage    NUMERIC(10,2) NOT NULL,         -- ใช้คำนวณเงินเดือนหน้า 2.7
+    pin_hash      VARCHAR(255) NOT NULL,          -- เก็บ PIN แบบ hash เท่านั้น ห้ามเก็บ plaintext
+    active        BOOLEAN NOT NULL DEFAULT true,   -- ปิดใช้งานจากหน้า 2.10 แล้วล็อกอินหน้า 1.1 ไม่ได้
+    created_at    TIMESTAMP NOT NULL DEFAULT now()
+);
+
+-- ----------------------------------------------------------------
+-- 4. วันทำงาน — หน้า 2.7 คำนวณเงินเดือน (ปฏิทินแตะยืนยันวันมาทำงาน)
+-- ----------------------------------------------------------------
+CREATE TABLE attendance (
+    id            SERIAL PRIMARY KEY,
+    staff_id      INTEGER NOT NULL REFERENCES staff(id),
+    work_date     DATE NOT NULL,
+    confirmed_by  INTEGER REFERENCES staff(id),   -- เจ้าของร้าน/หัวหน้าสาขาที่กดยืนยัน
+    UNIQUE (staff_id, work_date)
+);
+
+-- ----------------------------------------------------------------
+-- 5. วัตถุดิบดิบ (ต้นทุน) — หน้า 2.4 ตั้งค่าเมนู/ต้นทุน ส่วนราคาต้นทุนวัตถุดิบ
+-- ----------------------------------------------------------------
+CREATE TABLE raw_materials (
+    id            SERIAL PRIMARY KEY,
+    name          VARCHAR(100) NOT NULL,          -- เป็ดสด, ไก่สด, เครื่องหมัก, ถ่าน, ข้าวเหนียวดิบ
+    unit          VARCHAR(20) NOT NULL,           -- กก., ชุด, ฯลฯ
+    cost_per_unit NUMERIC(10,2) NOT NULL,         -- แก้ไขได้เองหน้า 2.4 เมื่อราคาตลาดเปลี่ยน
+    updated_at    TIMESTAMP NOT NULL DEFAULT now()
+);
+
+-- ----------------------------------------------------------------
+-- 6. เมนูสินค้า — หน้า 2.4 ตั้งค่าเมนู/ต้นทุน, ใช้แสดงในหน้าขาย 1.2
+-- ----------------------------------------------------------------
+CREATE TABLE menus (
+    id            SERIAL PRIMARY KEY,
+    name          VARCHAR(100) NOT NULL,          -- เป็ดย่างเกลือ, ไก่หมุนขมิ้น, ข้าวเหนียว
+    unit          VARCHAR(20) NOT NULL,           -- ตัว, ถุง
+    price         NUMERIC(10,2) NOT NULL,         -- ราคาเต็มหน่วย (ครึ่งตัวคำนวณ /2 ตอนขาย)
+    has_half_option BOOLEAN NOT NULL DEFAULT true, -- ข้าวเหนียว = false
+    active        BOOLEAN NOT NULL DEFAULT true
+);
+
+-- ----------------------------------------------------------------
+-- 7. สูตรวัตถุดิบต่อเมนู — หน้า 2.4 (คำนวณต้นทุนต่อจานอัตโนมัติ)
+-- ----------------------------------------------------------------
+CREATE TABLE menu_recipe (
+    menu_id       INTEGER NOT NULL REFERENCES menus(id),
+    material_id   INTEGER NOT NULL REFERENCES raw_materials(id),
+    qty_per_unit  NUMERIC(10,3) NOT NULL,         -- ปริมาณที่ใช้ต่อ 1 หน่วยขาย
+    PRIMARY KEY (menu_id, material_id)
+);
+
+-- ----------------------------------------------------------------
+-- 8. สต็อกสินค้าสำเร็จต่อสาขา — หน้า 2.5 (Admin แก้ได้), 1.7 (พนักงานดูอย่างเดียว)
+-- ----------------------------------------------------------------
+CREATE TABLE branch_stock (
+    id              SERIAL PRIMARY KEY,
+    branch_id       INTEGER NOT NULL REFERENCES branches(id),
+    menu_id         INTEGER NOT NULL REFERENCES menus(id),
+    qty             INTEGER NOT NULL DEFAULT 0,
+    reorder_point   INTEGER NOT NULL DEFAULT 5,     -- แก้ได้เองหน้า 2.5
+    UNIQUE (branch_id, menu_id)
+);
+
+-- ----------------------------------------------------------------
+-- 9. ประวัติการเคลื่อนไหวสต็อก — หน้า 2.5 (log รับเข้า/ตัดออก/ปรับยอด)
+-- ----------------------------------------------------------------
+CREATE TABLE stock_logs (
+    id            SERIAL PRIMARY KEY,
+    branch_id     INTEGER NOT NULL REFERENCES branches(id),
+    menu_id       INTEGER NOT NULL REFERENCES menus(id),
+    type          VARCHAR(10) NOT NULL CHECK (type IN ('in', 'out', 'adjust')),
+    qty           INTEGER NOT NULL,               -- ติดลบได้ในกรณี adjust
+    note          VARCHAR(255),
+    staff_id      INTEGER REFERENCES staff(id),   -- ใครเป็นคนทำรายการ (audit)
+    order_id      INTEGER,                        -- ผูกกับ orders.id ถ้า type = 'out' จากการขาย (FK เพิ่มด้านล่าง)
+    created_at    TIMESTAMP NOT NULL DEFAULT now()
+);
+
+-- ----------------------------------------------------------------
+-- 10. ออเดอร์ — หน้า 1.2–1.6 (ขาย, ชำระเงิน, ใบเสร็จ, ยกเลิก) และ 2.2 (รายงานยอดขาย)
+-- ----------------------------------------------------------------
+CREATE TABLE orders (
+    id              SERIAL PRIMARY KEY,
+    branch_id       INTEGER NOT NULL REFERENCES branches(id),
+    staff_id        INTEGER NOT NULL REFERENCES staff(id),   -- คนขาย
+    channel         VARCHAR(20) NOT NULL CHECK (
+                        channel IN ('cash', 'transfer', 'lineman', 'grab', 'shopee')
+                    ),
+    status          VARCHAR(20) NOT NULL DEFAULT 'completed' CHECK (
+                        status IN ('completed', 'cancelled')
+                    ),
+    cancel_reason   VARCHAR(255),                 -- บังคับกรอกก่อนยกเลิก (หน้า 1.6)
+    cancelled_by    INTEGER REFERENCES staff(id),
+    cancelled_at    TIMESTAMP,
+    total_amount    NUMERIC(10,2) NOT NULL,
+    cash_received   NUMERIC(10,2),                -- เฉพาะ channel = 'cash'
+    change_given    NUMERIC(10,2),
+    synced          BOOLEAN NOT NULL DEFAULT true, -- false = ยังค้างจากโหมดออฟไลน์ (หน้า 1.8) รอ sync
+    created_at      TIMESTAMP NOT NULL DEFAULT now()
+);
+
+ALTER TABLE stock_logs
+    ADD CONSTRAINT fk_stock_logs_order FOREIGN KEY (order_id) REFERENCES orders(id);
+
+-- ----------------------------------------------------------------
+-- 11. รายการสินค้าในออเดอร์ — หน้า 1.3 ตะกร้า, 1.5 ใบเสร็จ
+-- ----------------------------------------------------------------
+CREATE TABLE order_items (
+    id            SERIAL PRIMARY KEY,
+    order_id      INTEGER NOT NULL REFERENCES orders(id),
+    menu_id       INTEGER NOT NULL REFERENCES menus(id),
+    size          VARCHAR(10) NOT NULL DEFAULT 'full' CHECK (size IN ('full', 'half')),
+    qty           INTEGER NOT NULL,
+    unit_price    NUMERIC(10,2) NOT NULL,          -- ราคาต่อหน่วย ณ ตอนขาย (กันราคาย้อนหลังเปลี่ยน)
+    line_total    NUMERIC(10,2) NOT NULL
+);
+
+-- ----------------------------------------------------------------
+-- 12. ค่าใช้จ่ายอื่น (ไม่ใช่วัตถุดิบ) — หน้า 2.3 กำไร-ขาดทุน
+-- ----------------------------------------------------------------
+CREATE TABLE other_expenses (
+    id            SERIAL PRIMARY KEY,
+    branch_id     INTEGER REFERENCES branches(id), -- NULL = ค่าใช้จ่ายรวมทั้งร้าน
+    label         VARCHAR(100) NOT NULL,           -- ค่าไฟ, ค่าน้ำ, ค่าแก๊ส/ถ่าน, ค่าเช่า, ค่าบรรจุภัณฑ์
+    amount        NUMERIC(10,2) NOT NULL,          -- ต่อเดือน
+    effective_month DATE NOT NULL DEFAULT date_trunc('month', now())
+);
+
+-- ----------------------------------------------------------------
+-- 13. แจ้งเตือนวัตถุดิบใกล้หมด — หน้า 2.9
+-- ----------------------------------------------------------------
+CREATE TABLE notifications (
+    id            SERIAL PRIMARY KEY,
+    branch_id     INTEGER NOT NULL REFERENCES branches(id),
+    menu_id       INTEGER NOT NULL REFERENCES menus(id),
+    qty_at_trigger INTEGER NOT NULL,
+    read          BOOLEAN NOT NULL DEFAULT false,
+    resolved      BOOLEAN NOT NULL DEFAULT false,  -- true อัตโนมัติเมื่อรับสต็อกเข้าจนพ้นจุดแจ้งเตือน
+    created_at    TIMESTAMP NOT NULL DEFAULT now()
+);
+
+-- ============================================================
+-- Indexes ที่ควรมีเพิ่ม เพื่อรองรับการค้นหา/รายงานที่ใช้บ่อย
+-- ============================================================
+CREATE INDEX idx_orders_branch_date ON orders (branch_id, created_at);
+CREATE INDEX idx_orders_channel ON orders (channel);
+CREATE INDEX idx_stock_logs_branch_menu ON stock_logs (branch_id, menu_id, created_at);
+CREATE INDEX idx_attendance_staff_month ON attendance (staff_id, work_date);
+CREATE INDEX idx_notifications_unread ON notifications (branch_id, read) WHERE read = false;
+
+-- ============================================================
+-- หมายเหตุการออกแบบ
+-- ============================================================
+-- 1) แยก raw_materials (ต้นทุน) ออกจาก menus (ราคาขาย) ชัดเจน เพราะเจ้าของร้าน
+--    อยากแก้ราคาต้นทุนเป็ด/ไก่ได้เองโดยไม่กระทบราคาขาย และให้ทุกเมนูที่ใช้วัตถุดิบ
+--    เดียวกันคำนวณต้นทุนใหม่พร้อมกันอัตโนมัติผ่านตาราง menu_recipe
+-- 2) branch_stock นับเป็น "จำนวนสินค้าสำเร็จ" ต่อสาขา (เช่น เป็ดพร้อมขาย 12 ตัว)
+--    ไม่ใช่น้ำหนักวัตถุดิบดิบ ส่วนน้ำหนักดิบอยู่ใน raw_materials/menu_recipe
+-- 3) orders.synced ใช้รองรับโหมดออฟไลน์ (1.8): แอปฝั่ง client บันทึกออเดอร์ลง
+--    IndexedDB ก่อน แล้วค่อย insert เข้าตารางนี้พร้อม synced = true เมื่อ sync สำเร็จ
+-- 4) ไม่มีตารางหรือคอลัมน์เกี่ยวกับภาษี/VAT ตามที่เจ้าของร้านตัดออกแล้ว
