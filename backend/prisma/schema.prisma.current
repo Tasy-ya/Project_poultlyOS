@@ -1,0 +1,323 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Branch {
+  id       Int     @id @default(autoincrement())
+  name     String  @db.VarChar(100)
+  address  String? @db.VarChar(255)
+  code     String? @unique @db.VarChar(20)
+  province String? @db.VarChar(100)
+  phone    String? @db.VarChar(30)
+  isActive Boolean @default(true) @map("is_active")
+
+  @@map("branches")
+}
+
+model ShopSetting {
+  id       Int     @id @default(autoincrement())
+  shopName String  @map("shop_name") @db.VarChar(255)
+  address  String? @db.VarChar(255)
+  taxId    String? @map("tax_id") @db.VarChar(50)
+  logoUrl  String? @map("logo_url") @db.VarChar(255)
+
+  @@map("shop_settings")
+}
+
+model Staff {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(100)
+  position   String   @db.VarChar(20)
+  branchId   Int      @map("branch_id")
+  dailyWage  Decimal? @default(0) @map("daily_wage") @db.Decimal(10, 2)
+  pinHash    String   @map("pin_hash") @db.VarChar(255)
+  active     Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  @@map("staff")
+}
+
+model Attendance {
+  id            Int      @id @default(autoincrement())
+  staffId       Int      @map("staff_id")
+  workDate      DateTime @map("work_date") @db.Date
+  confirmedById Int?     @map("confirmed_by")
+  localId       String?  @map("local_id") @db.Uuid
+  synced        Boolean? @default(true)
+
+  @@unique([staffId, workDate])
+  @@index([staffId, workDate], map: "idx_attendance_staff_month")
+  @@map("attendance")
+}
+
+model RawMaterial {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  unit        String   @db.VarChar(20)
+  costPerUnit Decimal  @map("cost_per_unit") @db.Decimal(10, 2)
+  updated_at  DateTime @default(now()) @db.Timestamp(6)
+  category    String?  @db.VarChar(20)
+
+  @@map("raw_materials")
+}
+
+model BranchStockRaw {
+  id           Int      @id @default(autoincrement())
+  branchId     Int?     @map("branch_id")
+  materialId   Int?     @map("material_id")
+  qty          Decimal  @default(0) @db.Decimal(10, 3)
+  reorderPoint Decimal? @default(0) @map("reorder_point") @db.Decimal(10, 3)
+
+  @@unique([branchId, materialId])
+  @@map("branch_stock_raw")
+}
+
+model RawMaterialLog {
+  id         Int       @id @default(autoincrement())
+  branchId   Int?      @map("branch_id")
+  materialId Int?      @map("material_id")
+  type       String?   @db.VarChar(10)
+  qty        Decimal   @db.Decimal(10, 3)
+  note       String?   @db.VarChar(255)
+  staffId    Int?      @map("staff_id")
+  localId    String?   @map("local_id") @db.Uuid
+  synced     Boolean?  @default(true)
+  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@map("raw_material_logs")
+}
+
+model PrepItem {
+  id             Int     @id @default(autoincrement())
+  name           String  @db.VarChar(100)
+  unit           String  @db.VarChar(20)
+  shelfLifeHours Int?    @map("shelf_life_hours")
+  category       String? @db.VarChar(20)
+
+  @@map("prep_items")
+}
+
+model PrepRecipe {
+  prepItemId Int     @map("prep_item_id")
+  materialId Int     @map("material_id")
+  qtyPerUnit Decimal @map("qty_per_unit") @db.Decimal(10, 3)
+
+  @@id([prepItemId, materialId])
+  @@map("prep_recipe")
+}
+
+model PrepBatch {
+  id           Int       @id @default(autoincrement())
+  branchId     Int?      @map("branch_id")
+  prepItemId   Int?      @map("prep_item_id")
+  batchNo      String?   @map("batch_no") @db.VarChar(50)
+  qtyProduced  Decimal   @map("qty_produced") @db.Decimal(10, 3)
+  qtyRemaining Decimal   @map("qty_remaining") @db.Decimal(10, 3)
+  preparedById Int?      @map("prepared_by")
+  preparedAt   DateTime? @default(now()) @map("prepared_at") @db.Timestamp(6)
+  expiresAt    DateTime? @map("expires_at") @db.Timestamp(6)
+  status       String?   @default("active") @db.VarChar(10)
+  localId      String?   @map("local_id") @db.Uuid
+  synced       Boolean?  @default(true)
+
+  @@map("prep_batches")
+}
+
+model Menu {
+  id            Int     @id @default(autoincrement())
+  name          String  @db.VarChar(100)
+  unit          String  @db.VarChar(20)
+  price         Decimal @db.Decimal(10, 2)
+  hasHalfOption Boolean @default(true) @map("has_half_option")
+  active        Boolean @default(true)
+  category      String? @db.VarChar(20)
+
+  @@map("menus")
+}
+
+model MenuRecipe {
+  menuId     Int     @map("menu_id")
+  materialId Int?    @map("material_id")
+  qtyPerUnit Decimal @map("qty_per_unit") @db.Decimal(10, 3)
+  id         Int     @id @default(autoincrement())
+  prepItemId Int?    @map("prep_item_id")
+
+  @@map("menu_recipe")
+}
+
+model ReadyProductionLog {
+  id          Int       @id @default(autoincrement())
+  branchId    Int?      @map("branch_id")
+  menuId      Int?      @map("menu_id")
+  prepBatchId Int?      @map("prep_batch_id")
+  qtyProduced Int       @map("qty_produced")
+  staffId     Int?      @map("staff_id")
+  producedAt  DateTime? @default(now()) @map("produced_at") @db.Timestamp(6)
+  localId     String?   @map("local_id") @db.Uuid
+  synced      Boolean?  @default(true)
+
+  @@map("ready_production_logs")
+}
+
+model BranchStock {
+  id           Int @id @default(autoincrement())
+  branchId     Int @map("branch_id")
+  menuId       Int @map("menu_id")
+  qty          Int @default(0)
+  reorderPoint Int @default(5) @map("reorder_point")
+
+  @@unique([branchId, menuId])
+  @@unique([branchId, menuId], map: "uq_branch_stock")
+  @@map("branch_stock")
+}
+
+model StockLog {
+  id        Int      @id @default(autoincrement())
+  branchId  Int      @map("branch_id")
+  menuId    Int      @map("menu_id")
+  type      String   @db.VarChar(10)
+  qty       Int
+  note      String?  @db.VarChar(255)
+  staffId   Int?     @map("staff_id")
+  orderId   Int?     @map("order_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  localId   String?  @map("local_id") @db.Uuid
+  synced    Boolean? @default(true)
+
+  @@index([branchId, menuId, createdAt], map: "idx_stock_logs_branch_menu")
+  @@map("stock_logs")
+}
+
+model Promotion {
+  id             Int       @id @default(autoincrement())
+  name           String    @db.VarChar(100)
+  type           String?   @db.VarChar(20)
+  value          Decimal?  @db.Decimal(10, 2)
+  buyQty         Int?      @map("buy_qty")
+  getQty         Int?      @map("get_qty")
+  branchId       Int?      @map("branch_id")
+  minOrderAmount Decimal?  @default(0) @map("min_order_amount") @db.Decimal(10, 2)
+  startDate      DateTime? @map("start_date") @db.Date
+  endDate        DateTime? @map("end_date") @db.Date
+  active         Boolean?  @default(true)
+
+  @@map("promotions")
+}
+
+model PromotionMenu {
+  promotionId Int @map("promotion_id")
+  menuId      Int @map("menu_id")
+
+  @@id([promotionId, menuId])
+  @@map("promotion_menus")
+}
+
+model Order {
+  id             Int       @id @default(autoincrement())
+  branchId       Int       @map("branch_id")
+  staffId        Int       @map("staff_id")
+  channel        String?   @db.VarChar(20)
+  status         String    @default("completed") @db.VarChar(20)
+  cancelReason   String?   @map("cancel_reason") @db.VarChar(255)
+  cancelled_by   Int?
+  cancelled_at   DateTime? @db.Timestamp(6)
+  totalAmount    Decimal   @map("total_amount") @db.Decimal(10, 2)
+  cash_received  Decimal?  @db.Decimal(10, 2)
+  change_given   Decimal?  @db.Decimal(10, 2)
+  synced         Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  receiptNo      String?   @map("receipt_no") @db.VarChar(30)
+  subtotalAmount Decimal   @default(0) @map("subtotal_amount") @db.Decimal(10, 2)
+  promotionId    Int?      @map("promotion_id")
+  discountAmount Decimal?  @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  localId        String?   @map("local_id") @db.Uuid
+  deviceId       String?   @map("device_id") @db.VarChar(50)
+  orderChannel   String?   @default("store") @map("order_channel") @db.VarChar(20)
+
+  @@index([branchId, createdAt], map: "idx_orders_branch_date")
+  @@index([channel], map: "idx_orders_channel")
+  @@map("orders")
+}
+
+model Payment {
+  id      Int       @id @default(autoincrement())
+  orderId Int?      @map("order_id")
+  method  String?   @db.VarChar(20)
+  amount  Decimal   @db.Decimal(10, 2)
+  refNo   String?   @map("ref_no") @db.VarChar(100)
+  paidAt  DateTime? @default(now()) @map("paid_at") @db.Timestamp(6)
+
+  @@map("payments")
+}
+
+model OrderItem {
+  id             Int      @id @default(autoincrement())
+  orderId        Int      @map("order_id")
+  menuId         Int      @map("menu_id")
+  size           String   @default("full") @db.VarChar(10)
+  qty            Int
+  unitPrice      Decimal  @map("unit_price") @db.Decimal(10, 2)
+  lineTotal      Decimal  @map("line_total") @db.Decimal(10, 2)
+  discountAmount Decimal? @default(0) @map("discount_amount") @db.Decimal(10, 2)
+
+  @@map("order_items")
+}
+
+model Reservation {
+  id             Int       @id @default(autoincrement())
+  branchId       Int?      @map("branch_id")
+  customerName   String?   @map("customer_name") @db.VarChar(100)
+  phone          String?   @db.VarChar(20)
+  pickupDatetime DateTime  @map("pickup_datetime") @db.Timestamp(6)
+  depositAmount  Decimal?  @default(0) @map("deposit_amount") @db.Decimal(10, 2)
+  status         String?   @default("pending") @db.VarChar(20)
+  note           String?   @db.VarChar(255)
+  createdById    Int?      @map("created_by")
+  orderId        Int?      @map("order_id")
+  localId        String?   @map("local_id") @db.Uuid
+  synced         Boolean?  @default(true)
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@map("reservations")
+}
+
+model ReservationItem {
+  id            Int      @id @default(autoincrement())
+  reservationId Int?     @map("reservation_id")
+  menuId        Int?     @map("menu_id")
+  size          String?  @db.VarChar(10)
+  qty           Int
+  unitPrice     Decimal? @map("unit_price") @db.Decimal(10, 2)
+  lineTotal     Decimal? @map("line_total") @db.Decimal(10, 2)
+
+  @@map("reservation_items")
+}
+
+model OtherExpense {
+  id              Int       @id @default(autoincrement())
+  branchId        Int?      @map("branch_id")
+  label           String    @db.VarChar(100)
+  amount          Decimal   @db.Decimal(10, 2)
+  effective_month DateTime  @default(dbgenerated("date_trunc('month'::text, now())")) @db.Date
+  expenseDate     DateTime? @map("expense_date") @db.Date
+  staffId         Int?      @map("staff_id")
+
+  @@map("other_expenses")
+}
+
+model Notification {
+  id           Int      @id @default(autoincrement())
+  branchId     Int      @map("branch_id")
+  menuId       Int      @map("menu_id")
+  qtyAtTrigger Int      @map("qty_at_trigger")
+  isRead       Boolean  @default(false) @map("is_read")
+  resolved     Boolean  @default(false)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@map("notifications")
+}
