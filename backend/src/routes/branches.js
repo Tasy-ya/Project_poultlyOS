@@ -419,6 +419,7 @@ router.delete(
         await tx.readyProductionLog.deleteMany({ where })
         await tx.prepBatch.deleteMany({ where })
         await tx.rawMaterialLog.deleteMany({ where })
+        await tx.rawMaterialLot.deleteMany({ where })
         await tx.branchStockRaw.deleteMany({ where })
         await tx.otherExpense.deleteMany({ where })
         await tx.shift.deleteMany({ where })

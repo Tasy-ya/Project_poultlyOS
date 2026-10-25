@@ -161,6 +161,7 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
       name,
       unit,
       price,
+      cost,
       hasHalfOption,
       category,
     } = req.body
@@ -194,6 +195,9 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
 
         price:
           Number(price),
+
+        cost:
+          Math.max(0, Number(cost) || 0),
 
         hasHalfOption:
           finalHasHalfOption,
@@ -291,6 +295,7 @@ router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
     const {
       name,
       price,
+      cost,
       unit,
       hasHalfOption,
       category,
@@ -312,6 +317,15 @@ router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
 
       data.price =
         Number(price)
+
+    }
+
+
+    // ต้นทุนต่อ 1 หน่วยเต็ม (เต็มตัว) — ครึ่งตัวระบบคิดครึ่งหนึ่งให้เอง
+    if (cost !== undefined) {
+
+      data.cost =
+        Math.max(0, Number(cost) || 0)
 
     }
 

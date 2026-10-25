@@ -28,6 +28,17 @@ function cleanName(raw) {
   return name
 }
 
+// หมายเหตุรายเมนู เช่น "เป็ดฉ่ำ ๆ" "ไก่แห้ง ๆ" (ไม่บังคับ ไม่เกิน 200 ตัวอักษร)
+function cleanNote(raw) {
+  const note = String(raw == null ? '' : raw)
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200)
+
+  return note || null
+}
+
 function newToken() {
   return crypto.randomBytes(16).toString('hex')
 }
@@ -79,6 +90,7 @@ async function buildLines(tx, items) {
       qty,
       unitPrice,
       lineTotal: unitPrice * qty,
+      note: cleanNote(raw.note),
       stockUnits: size === 'half' ? qty : qty * (hasHalf ? 2 : 1),
     }
   })
@@ -138,7 +150,106 @@ async function cutStock(tx, { branchId, lines, orderId, receiptNo, staffId, labe
   }
 }
 
+// ตรวจสต็อกก่อนรับออเดอร์ออนไลน์ (ไม่ตัดสต็อก — ตัดตอนพนักงานยืนยันสลิป)
+// รวมหน่วยของเมนูเดียวกันทุกบรรทัดก่อนเทียบ เช่น เป็ดเต็มตัว + เป็ดครึ่งตัว
+const stockLabel = (hasHalf, units) => {
+  const u = Math.max(0, Math.floor(units))
+  if (!hasHalf) return `${u} ชิ้น`
+  const whole = Math.floor(u / 2)
+  const half = u % 2
+  if (whole > 0 && half) return `${whole} ตัว กับอีกครึ่งตัว`
+  if (whole > 0) return `${whole} ตัว`
+  return half ? 'ครึ่งตัว' : '0'
+}
+
+async function assertStockEnough(tx, branchId, lines) {
+  const need = new Map()
+
+  for (const l of lines) {
+    const cur = need.get(l.menuId) || { name: l.name, units: 0, hasHalf: false }
+    cur.units += l.stockUnits
+    cur.hasHalf = cur.hasHalf || l.size === 'half' || l.stockUnits === l.qty * 2
+    need.set(l.menuId, cur)
+  }
+
+  const rows = await tx.branchStock.findMany({
+    where: { branchId: Number(branchId), menuId: { in: [...need.keys()] } },
+  })
+
+  const have = new Map(rows.map(r => [r.menuId, Number(r.qty || 0)]))
+
+  for (const [menuId, n] of need) {
+    const left = have.get(menuId) || 0
+
+    if (left < n.units) {
+      throw new HttpError(
+        409,
+        left <= 0
+          ? `ขออภัย "${n.name}" หมดแล้ว กรุณานำออกจากตะกร้า`
+          : `ขออภัย "${n.name}" เหลือเพียง ${stockLabel(n.hasHalf, left)} กรุณาลดจำนวน`
+      )
+    }
+  }
+}
+
+// ยืนยันว่าออเดอร์ออนไลน์ชำระเงินแล้ว (ใช้ร่วมกันระหว่างพนักงานขายและแอดมิน)
+//   ตัดสต็อก + บันทึกรับเงิน + เปลี่ยนเป็น completed/new เพื่อให้พนักงานเริ่มเตรียมของได้ทันที
+async function confirmOnlineOrder(tx, orderId, { staffId, reference, label, requireSlip = false }) {
+  const order = await tx.order.findUnique({
+    where: { id: orderId },
+    include: { items: { include: { menu: true } } },
+  })
+
+  if (!order || order.orderChannel !== 'online') throw new HttpError(404, 'ไม่พบออเดอร์ออนไลน์')
+
+  if (order.status !== 'pending_payment') {
+    throw new HttpError(409, 'ออเดอร์นี้ไม่ได้อยู่ในสถานะรอตรวจสอบการชำระ')
+  }
+
+  if (requireSlip && !order.slipUrl) {
+    throw new HttpError(409, 'ลูกค้ายังไม่ได้แนบสลิปโอนเงิน')
+  }
+
+  if (!order.branchId) throw new HttpError(400, 'ออเดอร์ไม่มีข้อมูลสาขา')
+
+  await lockBranch(tx, order.branchId)
+
+  const lines = order.items.map(i => {
+    const halfOption = Boolean(i.menu?.hasHalfOption) || supportsHalf(i.menu?.category)
+    const size = i.size === 'half' && halfOption ? 'half' : 'full'
+    const qty = Number(i.qty)
+
+    return {
+      menuId: Number(i.menuId),
+      name: i.menu?.name || 'สินค้า',
+      qty,
+      size,
+      stockUnits: size === 'half' ? qty : qty * (halfOption ? 2 : 1),
+    }
+  })
+
+  await cutStock(tx, {
+    branchId: order.branchId,
+    lines,
+    orderId: order.id,
+    receiptNo: order.receiptNo,
+    staffId,
+    label,
+  })
+
+  await tx.payment.create({
+    data: { orderId: order.id, method: 'qr', amount: order.totalAmount, refNo: reference },
+  })
+
+  return tx.order.update({
+    where: { id: order.id },
+    data: { status: 'completed', fulfillmentStatus: 'new' },
+  })
+}
+
 module.exports = {
+  confirmOnlineOrder,
+  cleanNote,
   supportsHalf,
   cleanPhone,
   cleanName,
@@ -149,4 +260,5 @@ module.exports = {
   lockBranch,
   nextReceiptNo,
   cutStock,
+  assertStockEnough,
 }

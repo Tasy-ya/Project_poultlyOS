@@ -8,3 +8,10 @@ build/
 coverage/
 *.log
 .DS_Store
+
+# Slip uploads (private customer data)
+backend/uploads/
+   node_modules
+   .env
+   *.sql
+   dist

@@ -6,6 +6,9 @@ const KEY = 'poultryos_shop_v1'
 
 const Ctx = createContext(null)
 
+// วิธีรับสินค้า: pickup = รับที่ร้าน, delivery = ให้ส่ง (ที่อยู่ + พิกัดหมุด)
+const DEFAULT_DELIVERY = { method: 'pickup', address: '', lat: null, lng: null }
+
 function load() {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) || 'null')
@@ -13,7 +16,7 @@ function load() {
   } catch {
     // ใช้ค่าเริ่มต้น
   }
-  return { branchId: null, mode: 'order', cart: [] }
+  return { branchId: null, mode: 'order', cart: [], delivery: DEFAULT_DELIVERY }
 }
 
 export function ShopProvider({ children }) {
@@ -33,6 +36,7 @@ export function ShopProvider({ children }) {
     return {
       branchId: state.branchId,
       mode: state.mode,
+      delivery: { ...DEFAULT_DELIVERY, ...(state.delivery || {}) },
       cart,
       count: cart.reduce((s, i) => s + i.qty, 0),
       total: cart.reduce((s, i) => s + unitPrice(i) * i.qty, 0),
@@ -47,10 +51,20 @@ export function ShopProvider({ children }) {
 
       setMode: mode => setState(s => ({ ...s, mode })),
 
+      setDelivery: patch =>
+        setState(s => ({ ...s, delivery: { ...DEFAULT_DELIVERY, ...(s.delivery || {}), ...patch } })),
+
       add: item =>
         setState(s => {
+          // เมนูเดียวกัน ขนาดเดียวกัน หมายเหตุเดียวกัน = รวมเป็นบรรทัดเดียว
+          const note = String(item.note || '').trim().slice(0, 200)
+          item = { ...item, note }
+
           const i = s.cart.findIndex(
-            c => c.menuId === item.menuId && c.size === item.size
+            c =>
+              c.menuId === item.menuId &&
+              c.size === item.size &&
+              String(c.note || '') === note
           )
 
           const cart = [...s.cart]
@@ -70,6 +84,15 @@ export function ShopProvider({ children }) {
           cart: s.cart
             .map((c, i) => (i === index ? { ...c, qty: Math.min(qty, 50) } : c))
             .filter(c => c.qty > 0),
+        })),
+
+      // แก้หมายเหตุรายเมนูในตะกร้า
+      setNote: (index, note) =>
+        setState(s => ({
+          ...s,
+          cart: s.cart.map((c, i) =>
+            i === index ? { ...c, note: String(note || '').slice(0, 200) } : c
+          ),
         })),
 
       remove: index =>

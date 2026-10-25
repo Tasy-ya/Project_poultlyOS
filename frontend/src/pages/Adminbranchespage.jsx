@@ -11,6 +11,7 @@ import { api } from '../api'
 import { refreshBranches } from '../branch'
 
 import AdminStaffUsers from '../components/AdminStaffUsers'
+import AdminBottomNav from '../components/AdminBottomNav'
 
 
 // =====================================================
@@ -980,6 +981,23 @@ export default function AdminBranchesPage() {
             </div>
           </div>
 
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <Link
+              to="/admin/closures"
+              style={{
+                border: `1px solid ${RED}`,
+                borderRadius: 10,
+                background: '#fff',
+                color: RED,
+                padding: '12px 16px',
+                fontWeight: 700,
+                whiteSpace: 'nowrap',
+                textDecoration: 'none',
+              }}
+            >
+              ตั้งวันหยุดร้าน
+            </Link>
+
           <button
             type="button"
             onClick={startAdd}
@@ -1000,6 +1018,7 @@ export default function AdminBranchesPage() {
             <PlusFilledIcon size={16} />
             เพิ่มสาขาใหม่
           </button>
+          </div>
         </div>
 
 
@@ -1795,57 +1814,8 @@ export default function AdminBranchesPage() {
       )}
 
 
-      {/* =====================================================
-          ADMIN BOTTOM NAVIGATION
-      ===================================================== */}
-
-      <nav
-        style={{
-          position: 'fixed', left: 0, right: 0, bottom: 0,
-          height: 74, background: RED, display: 'flex',
-          justifyContent: 'center', zIndex: 3000,
-          boxShadow: '0 -2px 10px rgba(0,0,0,0.12)',
-        }}
-      >
-        <div
-          style={{ width: '100%', maxWidth: 2000, display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)', alignItems: 'stretch' }}
-        >
-          <Link to="/admin" style={{ ...navLinkStyle, transition: 'background 0.2s' }}>
-            <HomeIcon size={26} />
-            <span>หน้าหลัก</span>
-          </Link>
-
-          <Link to="/admin/sales" style={navLinkStyle}>
-            <ReceiptIcon size={27} />
-            <span>ประวัติการขาย</span>
-          </Link>
-
-          <Link to="/admin/products" style={navLinkStyle}>
-            <ShoppingBagIcon size={26} />
-            <span>แก้ไขสินค้า</span>
-          </Link>
-
-          <Link to="/admin/promotions" style={navLinkStyle}>
-            <GiftIcon size={26} />
-            <span>โปรโมชั่น</span>
-          </Link>
-
-          <Link
-            to="/admin/branches"
-            style={{
-              ...navLinkStyle,
-              fontWeight: 700,
-              background: 'rgba(255,255,255,0.20)',
-              borderRadius: '12px 12px 0 0',
-              marginTop: 4,
-            }}
-          >
-            <BuildingIcon size={26} />
-            <span>จัดการสาขา</span>
-          </Link>
-        </div>
-      </nav>
+      {/* แถบเมนูล่างของ Admin (ใช้ร่วมกันทุกหน้า) */}
+      <AdminBottomNav />
     </div>
   )
 

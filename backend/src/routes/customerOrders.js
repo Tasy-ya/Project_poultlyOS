@@ -8,11 +8,26 @@ const {
   lockBranch,
   nextReceiptNo,
   cutStock,
+  confirmOnlineOrder,
 } = require('../lib/orderCore')
+const slips = require('../lib/slips')
+const slipAI = require('../lib/slipAI')
+const { rateLimit } = require('../lib/rateLimit')
 
 // =====================================================
 // ฝั่งพนักงาน (ฝ่ายขาย/แอดมิน) — mount ที่ /api/customer
 //
+//   GET   /inbox?branchId=                     ออเดอร์/การจองที่ลูกค้าแนบสลิปแล้ว รอพนักงานตรวจสลิป
+//   GET   /orders/:id/slip                     ดูรูปสลิปของออเดอร์ (ต้องล็อกอิน)
+//   GET   /reservations/:id/slip               ดูรูปสลิปมัดจำของการจอง
+//   POST  /orders/:id/confirm-payment          พนักงานตรวจสลิปแล้ว ยืนยันรับเงิน -> เตรียมออเดอร์ได้เลย
+//   POST  /orders/:id/reject                   ไม่รับออเดอร์ (สลิปไม่ถูกต้อง/ไม่พบการโอน) = ยกเลิก — ต้องมีเหตุผล หรือโทรแจ้งลูกค้าแล้ว
+//   GET   /unpaid?branchId=                    ออเดอร์ที่ลูกค้ายังไม่โอน/ยังไม่แนบสลิป
+//   POST  /orders/:id/cancel                   พนักงานยกเลิกออเดอร์ที่ลูกค้าไม่ชำระ — ต้องมีเหตุผล หรือโทรแจ้งลูกค้าแล้ว
+//   GET   /cancelled?branchId=                 ออเดอร์ที่ยกเลิกแล้ว (ทั้งหมด ล่าสุด 200 รายการ) เพื่อลบออก
+//   DELETE /orders/:id                         ลบออเดอร์ที่ยกเลิกแล้ว/ไม่เคยชำระ ออกจากระบบถาวร
+//   POST  /reservations/:id/confirm-deposit    ยืนยันรับมัดจำ
+//   POST  /reservations/:id/reject             ไม่รับการจอง (ยกเลิก) — ต้องมีเหตุผล หรือโทรแจ้งลูกค้าแล้ว
 //   GET   /orders?branchId=                    ออเดอร์ออนไลน์ที่ต้องเตรียม/ส่งมอบ
 //   PATCH /orders/:id/status                   new -> preparing -> ready -> picked_up
 //   GET   /reservations?branchId=&scope=       การจอง (active = รอรับสินค้า)
@@ -34,6 +49,7 @@ const itemView = i => ({
   size: i.size,
   qty: i.qty,
   lineTotal: num(i.lineTotal),
+  note: i.note || null,
 })
 
 const PAY_METHODS = ['cash', 'qr', 'transfer', 'card']
@@ -49,16 +65,352 @@ function branchFilter(req) {
   return Number.isInteger(id) ? { branchId: id } : {}
 }
 
+// พนักงานยกเลิก/ไม่รับออเดอร์ได้ก็ต่อเมื่อ "แจ้งเหตุผล" หรือ "โทรแจ้งลูกค้าแล้ว" อย่างใดอย่างหนึ่ง
+// ข้อความนี้ลูกค้าจะเห็นในหน้าสถานะออเดอร์
+function cancelReasonFrom(body) {
+  const reason = String(body?.reason || '').trim().slice(0, 200)
+  const called = body?.calledCustomer === true
+
+  if (!reason && !called) {
+    throw new HttpError(400, 'กรุณาระบุเหตุผลที่ยกเลิก หรือโทรแจ้งลูกค้าก่อน')
+  }
+
+  if (called) {
+    return (reason ? `ร้านโทรแจ้งลูกค้าแล้ว: ${reason}` : 'ร้านโทรแจ้งลูกค้าแล้ว').slice(0, 255)
+  }
+
+  return reason
+}
+
 
 // =====================================================
 // ออเดอร์ที่ลูกค้าสั่งเอง
 // =====================================================
+
+// ---------- สลิปโอนเงินที่รอพนักงานตรวจ ----------
+
+const pendingOrderView = o => ({
+  id: o.id,
+  receiptNo: o.receiptNo,
+  createdAt: o.createdAt,
+  slipUploadedAt: o.slipUploadedAt,
+  customerName: o.customerName,
+  customerPhone: o.customerPhone,
+  total: num(o.totalAmount),
+  deliveryMethod: o.deliveryMethod || 'pickup',
+  deliveryAddress: o.deliveryAddress || null,
+  deliveryLat: o.deliveryLat,
+  deliveryLng: o.deliveryLng,
+  deliveryFee: num(o.deliveryFee),
+  pickupAt: o.pickupAt || null,
+  slipAi: o.slipAi || null,
+  items: o.items.map(itemView),
+})
+
+const pendingReservationView = r => ({
+  id: r.id,
+  reservationNo: `R${String(r.id).padStart(5, '0')}`,
+  createdAt: r.createdAt,
+  slipUploadedAt: r.slipUploadedAt,
+  customerName: r.customerName,
+  customerPhone: r.phone,
+  total: num(r.totalAmount),
+  deposit: num(r.depositAmount),
+  pickupAt: r.pickupDatetime,
+  note: r.note,
+  deliveryMethod: r.deliveryMethod || 'pickup',
+  deliveryAddress: r.deliveryAddress || null,
+  deliveryLat: r.deliveryLat,
+  deliveryLng: r.deliveryLng,
+  deliveryFee: num(r.deliveryFee),
+  slipAi: r.slipAi || null,
+  items: r.items.map(itemView),
+})
+
+router.get('/inbox', async (req, res) => {
+  const where = branchFilter(req)
+
+  const [orders, reservations] = await Promise.all([
+    prisma.order.findMany({
+      where: {
+        ...where,
+        orderChannel: 'online',
+        status: 'pending_payment',
+        slipUrl: { not: null },
+      },
+      include: { items: { include: { menu: true } } },
+      orderBy: { slipUploadedAt: 'asc' },
+    }),
+    prisma.reservation.findMany({
+      where: { ...where, status: 'pending_payment', slipUrl: { not: null } },
+      include: { items: { include: { menu: true } } },
+      orderBy: { slipUploadedAt: 'asc' },
+    }),
+  ])
+
+  res.json({
+    orders: orders.map(pendingOrderView),
+    reservations: reservations.map(pendingReservationView),
+  })
+})
+
+function sendSlip(res, name) {
+  const file = slips.slipFile(name)
+
+  if (!file) throw new HttpError(404, 'ไม่พบรูปสลิป')
+
+  res.setHeader('Cache-Control', 'private, no-store')
+  res.sendFile(file)
+}
+
+router.get('/orders/:id/slip', async (req, res) => {
+  const order = await prisma.order.findUnique({
+    where: { id: Number(req.params.id) },
+    select: { slipUrl: true },
+  })
+
+  if (!order || !order.slipUrl) throw new HttpError(404, 'ลูกค้ายังไม่ได้แนบสลิป')
+
+  sendSlip(res, order.slipUrl)
+})
+
+router.get('/reservations/:id/slip', async (req, res) => {
+  const r = await prisma.reservation.findUnique({
+    where: { id: Number(req.params.id) },
+    select: { slipUrl: true },
+  })
+
+  if (!r || !r.slipUrl) throw new HttpError(404, 'ลูกค้ายังไม่ได้แนบสลิป')
+
+  sendSlip(res, r.slipUrl)
+})
+
+// ---------- AI ตรวจสลิป (ตัวช่วยคัดกรอง — พนักงานยังต้องกดยืนยันเอง) ----------
+const aiLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 60,
+  message: 'สั่ง AI ตรวจสลิปถี่เกินไป กรุณารอสักครู่',
+})
+
+router.get('/ai-status', (req, res) => {
+  res.json({ enabled: slipAI.enabled() })
+})
+
+router.post('/orders/:id/ai-check-slip', aiLimiter, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isInteger(id)) throw new HttpError(400, 'รหัสออเดอร์ไม่ถูกต้อง')
+
+  res.json(await slipAI.runCheck('order', id))
+})
+
+router.post('/reservations/:id/ai-check-slip', aiLimiter, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isInteger(id)) throw new HttpError(400, 'รหัสการจองไม่ถูกต้อง')
+
+  res.json(await slipAI.runCheck('reservation', id))
+})
+
+// พนักงานขายตรวจสลิปแล้วกดยืนยัน -> ตัดสต็อก + บันทึกรับเงิน + เริ่มเตรียมออเดอร์ได้ทันที (ไม่ต้องรอแอดมิน)
+router.post('/orders/:id/confirm-payment', async (req, res) => {
+  const id = Number(req.params.id)
+
+  if (!Number.isInteger(id)) throw new HttpError(400, 'รหัสออเดอร์ไม่ถูกต้อง')
+
+  const reference =
+    String(req.body?.bankReference || '').trim().slice(0, 100) ||
+    `ตรวจสลิปโดย ${req.staff.name || `พนักงาน #${req.staff.id}`}`
+
+  const out = await prisma.$transaction(tx =>
+    confirmOnlineOrder(tx, id, {
+      staffId: req.staff.id,
+      reference,
+      requireSlip: true,
+      label: 'พนักงานตรวจสลิปและยืนยันออเดอร์ออนไลน์',
+    })
+  )
+
+  res.json({ ok: true, id: out.id, status: out.status, fulfillmentStatus: out.fulfillmentStatus })
+})
+
+// ยกเลิกออเดอร์ที่ยังไม่ยืนยันชำระ (ไม่รับออเดอร์ / ลูกค้าไม่โอน)
+// ออเดอร์ที่ยังไม่ยืนยันยังไม่ได้ตัดสต็อก จึงไม่ต้องคืนสต็อก
+async function cancelUnpaidOrder(req, res) {
+  const id = Number(req.params.id)
+
+  if (!Number.isInteger(id)) throw new HttpError(400, 'รหัสออเดอร์ไม่ถูกต้อง')
+
+  const reason = cancelReasonFrom(req.body)
+
+  const r = await prisma.order.updateMany({
+    where: { id, orderChannel: 'online', status: 'pending_payment' },
+    data: { status: 'cancelled', cancelReason: reason },
+  })
+
+  if (r.count === 0) {
+    throw new HttpError(409, 'ออเดอร์นี้ไม่ได้อยู่ในสถานะรอชำระเงินแล้ว (อาจถูกยืนยันหรือยกเลิกไปก่อนหน้า)')
+  }
+
+  res.json({ ok: true, id, status: 'cancelled', cancelReason: reason })
+}
+
+router.post('/orders/:id/reject', cancelUnpaidOrder)
+router.post('/orders/:id/cancel', cancelUnpaidOrder)
+
+// ---------- ออเดอร์ที่ลูกค้ายังไม่ชำระ (ยังไม่แนบสลิป) ----------
+router.get('/unpaid', async (req, res) => {
+  const orders = await prisma.order.findMany({
+    where: {
+      ...branchFilter(req),
+      orderChannel: 'online',
+      status: 'pending_payment',
+      slipUrl: null,
+    },
+    include: { items: { include: { menu: true } } },
+    orderBy: { createdAt: 'asc' },
+  })
+
+  res.json(
+    orders.map(o => ({
+      id: o.id,
+      receiptNo: o.receiptNo,
+      createdAt: o.createdAt,
+      customerName: o.customerName,
+      customerPhone: o.customerPhone,
+      total: num(o.totalAmount),
+      deliveryMethod: o.deliveryMethod || 'pickup',
+      deliveryAddress: o.deliveryAddress || null,
+      deliveryLat: o.deliveryLat,
+      deliveryLng: o.deliveryLng,
+      pickupAt: o.pickupAt || null,
+      items: o.items.map(itemView),
+    }))
+  )
+})
+
+// ---------- ออเดอร์ที่ยกเลิกแล้ว (ทั้งหมด ล่าสุด 200 รายการ) ----------
+router.get('/cancelled', async (req, res) => {
+  const orders = await prisma.order.findMany({
+    where: {
+      ...branchFilter(req),
+      orderChannel: 'online',
+      status: 'cancelled',
+    },
+    include: { items: { include: { menu: true } }, payments: true },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  })
+
+  res.json(
+    orders.map(o => ({
+      id: o.id,
+      receiptNo: o.receiptNo,
+      createdAt: o.createdAt,
+      customerName: o.customerName,
+      customerPhone: o.customerPhone,
+      total: num(o.totalAmount),
+      cancelReason: o.cancelReason || null,
+      hadSlip: Boolean(o.slipUrl),
+      // ลบได้เฉพาะออเดอร์ที่ไม่เคยรับเงิน (กันลบประวัติการเงินจริง)
+      deletable: o.payments.length === 0,
+      items: o.items.map(itemView),
+    }))
+  )
+})
+
+// ---------- ลบออเดอร์ที่ลูกค้าไม่ชำระ ----------
+// ลบได้เฉพาะออเดอร์ออนไลน์ที่ "ยกเลิกแล้ว" และไม่เคยรับเงิน/ตัดสต็อก — ออเดอร์ที่ขายจริงลบไม่ได้
+router.delete('/orders/:id', async (req, res) => {
+  const id = Number(req.params.id)
+
+  if (!Number.isInteger(id)) throw new HttpError(400, 'รหัสออเดอร์ไม่ถูกต้อง')
+
+  const slipUrl = await prisma.$transaction(async tx => {
+    const order = await tx.order.findFirst({
+      where: { id, orderChannel: 'online' },
+      include: { payments: true, stockLogs: true },
+    })
+
+    if (!order) throw new HttpError(404, 'ไม่พบออเดอร์')
+
+    if (order.status !== 'cancelled') {
+      throw new HttpError(409, 'ลบได้เฉพาะออเดอร์ที่ยกเลิกแล้ว กรุณายกเลิกออเดอร์ก่อน')
+    }
+
+    if (order.payments.length > 0 || order.stockLogs.length > 0) {
+      throw new HttpError(409, 'ออเดอร์นี้เคยรับเงิน/ตัดสต็อกแล้ว ลบไม่ได้')
+    }
+
+    await tx.orderItem.deleteMany({ where: { orderId: id } })
+    await tx.order.delete({ where: { id } })
+
+    return order.slipUrl
+  })
+
+  if (slipUrl) slips.removeSlip(slipUrl)
+
+  res.json({ ok: true, id })
+})
+
+router.post('/reservations/:id/confirm-deposit', async (req, res) => {
+  const id = Number(req.params.id)
+
+  if (!Number.isInteger(id)) throw new HttpError(400, 'รหัสการจองไม่ถูกต้อง')
+
+  const reference =
+    String(req.body?.bankReference || '').trim().slice(0, 100) ||
+    `ตรวจสลิปโดย ${req.staff.name || `พนักงาน #${req.staff.id}`}`
+
+  const out = await prisma.$transaction(async tx => {
+    const r = await tx.reservation.findUnique({ where: { id } })
+
+    if (!r) throw new HttpError(404, 'ไม่พบการจอง')
+
+    if (r.status !== 'pending_payment') {
+      throw new HttpError(409, 'การจองนี้ไม่ได้อยู่ในสถานะรอตรวจสอบมัดจำ')
+    }
+
+    if (!r.slipUrl) throw new HttpError(409, 'ลูกค้ายังไม่ได้แนบสลิปโอนเงิน')
+
+    await tx.reservationPayment.create({
+      data: {
+        reservationId: r.id,
+        kind: 'deposit',
+        method: 'qr',
+        amount: r.depositAmount,
+        refNo: reference,
+      },
+    })
+
+    return tx.reservation.update({ where: { id: r.id }, data: { status: 'confirmed' } })
+  })
+
+  res.json({ ok: true, id: out.id, status: out.status })
+})
+
+router.post('/reservations/:id/reject', async (req, res) => {
+  const id = Number(req.params.id)
+  const reason = cancelReasonFrom(req.body)
+
+  const r = await prisma.reservation.updateMany({
+    where: { id, status: 'pending_payment' },
+    data: { status: 'cancelled', cancelReason: reason },
+  })
+
+  if (r.count === 0) {
+    throw new HttpError(409, 'การจองนี้ไม่ได้อยู่ในสถานะรอตรวจสอบมัดจำ')
+  }
+
+  res.json({ ok: true, id, status: 'cancelled', cancelReason: reason })
+})
+
 
 router.get('/orders', async (req, res) => {
   const orders = await prisma.order.findMany({
     where: {
       ...branchFilter(req),
       orderChannel: 'online',
+      // ออเดอร์ที่ยกเลิกแล้วไม่ต้องขึ้นในรายการเตรียมของ (ไปอยู่ในส่วน "ออเดอร์ที่ยกเลิกแล้ว")
+      status: { notIn: ['pending_payment', 'cancelled'] },
       OR: [
         { fulfillmentStatus: { in: ['new', 'preparing', 'ready'] } },
         { createdAt: { gte: startOfToday() } },
@@ -77,6 +429,11 @@ router.get('/orders', async (req, res) => {
       fulfillmentStatus: o.fulfillmentStatus,
       customerName: o.customerName,
       customerPhone: o.customerPhone,
+      deliveryMethod: o.deliveryMethod || 'pickup',
+      deliveryAddress: o.deliveryAddress || null,
+      deliveryLat: o.deliveryLat,
+      deliveryLng: o.deliveryLng,
+      pickupAt: o.pickupAt || null,
       total: num(o.totalAmount),
       paid: o.payments.reduce((s, p) => s + num(p.amount), 0),
       items: o.items.map(itemView),
@@ -100,6 +457,10 @@ router.patch('/orders/:id/status', async (req, res) => {
 
   if (order.status === 'cancelled') {
     throw new HttpError(409, 'ออเดอร์นี้ถูกยกเลิกแล้ว')
+  }
+
+  if (order.status === 'pending_payment') {
+    throw new HttpError(409, 'ออเดอร์นี้ยังไม่ได้ยืนยันการชำระเงิน กรุณาตรวจสลิปและกดยืนยันก่อน')
   }
 
   const updated = await prisma.order.update({
@@ -135,6 +496,11 @@ function reservationView(r) {
     customerPhone: r.phone,
     note: r.note,
     cancelReason: r.cancelReason,
+  deliveryMethod: r.deliveryMethod || 'pickup',
+    deliveryAddress: r.deliveryAddress || null,
+    deliveryLat: r.deliveryLat,
+    deliveryLng: r.deliveryLng,
+    deliveryFee: num(r.deliveryFee),
     total: num(r.totalAmount),
     deposit: num(r.depositAmount),
     paid: net,
@@ -223,7 +589,7 @@ router.post('/reservations/:id/collect', async (req, res) => {
     const lines = (
       await buildLines(
         tx,
-        r.items.map(i => ({ menuId: i.menuId, size: i.size, qty: i.qty }))
+        r.items.map(i => ({ menuId: i.menuId, size: i.size, qty: i.qty, note: i.note }))
       )
     ).map((l, idx) => ({
       ...l,
@@ -266,6 +632,7 @@ router.post('/reservations/:id/collect', async (req, res) => {
           qty: l.qty,
           unitPrice: l.unitPrice,
           lineTotal: l.lineTotal,
+          note: l.note,
         },
       })
     }

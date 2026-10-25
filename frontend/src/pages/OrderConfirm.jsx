@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import {
@@ -5,11 +6,24 @@ import {
   linePrice,
   loadPendingOrder,
   savePendingOrder,
+  api,
+  getStaff,
+  getSelectedBranchId,
 } from '../api'
 
 export default function OrderConfirm() {
   const location = useLocation()
   const navigate = useNavigate()
+  const [shopPromotions, setShopPromotions] = useState([])
+  const staff = getStaff()
+  const branchId = getSelectedBranchId() || staff?.branchId
+
+  useEffect(() => {
+    if (!branchId) return
+    api.getShopPromotions(branchId)
+      .then(rows => setShopPromotions(Array.isArray(rows) ? rows : []))
+      .catch(err => console.error('โหลดโปรโมชั่นพนักงานไม่สำเร็จ:', err))
+  }, [branchId])
 
   const order =
     location.state?.cart?.length
@@ -40,11 +54,47 @@ export default function OrderConfirm() {
 
   const cart = order.cart
 
-  const total = cart.reduce(
-    (sum, item) =>
-      sum + linePrice(item),
+  const subtotal = cart.reduce(
+    (sum, item) => sum + linePrice(item),
     0
   )
+
+  // ใช้โปรโมชั่นที่แอดมินสร้าง (shop promotions) กับสินค้าที่ระบุ
+  const applicablePromotion = shopPromotions.find(promo => {
+    if (!promo || !['discount', 'bulk', 'festival', 'other'].includes(String(promo.type || '').toLowerCase())) return false
+    const pricing = promo.pricing || {}
+    const value = Number(pricing.discountValue || 0)
+    if (value <= 0) return false
+    const productName = String(promo.productName || '').trim()
+    const matchingItems = cart.filter(item =>
+      !productName || String(item.name || '').trim() === productName
+    )
+    if (!matchingItems.length) return false
+    const qty = matchingItems.reduce((n, item) => n + Number(item.qty || 0), 0)
+    // ใช้เฉพาะช่อง "ซื้อตั้งแต่ (ตัว)" ที่แอดมินกรอก ไม่เดาจากข้อความในคำอธิบาย
+    const minQty = Math.max(0, Number(pricing.minQty || 0))
+    if (minQty > 0 && qty < minQty) return false
+    return ['percent', 'baht'].includes(String(pricing.discountType || 'percent').toLowerCase())
+  })
+
+  const discount = applicablePromotion
+    ? (() => {
+        const pricing = applicablePromotion.pricing || {}
+        const productName = String(applicablePromotion.productName || '').trim()
+        const eligibleSubtotal = cart.reduce((sum, item) => {
+          if (productName && String(item.name || '').trim() !== productName) return sum
+          return sum + linePrice(item)
+        }, 0)
+        const value = Number(pricing.discountValue || 0)
+        return Math.min(eligibleSubtotal, Math.max(0,
+          String(pricing.discountType || 'percent').toLowerCase() === 'baht'
+            ? value
+            : Math.round(eligibleSubtotal * value) / 100
+        ))
+      })()
+    : 0
+
+  const total = Math.max(0, subtotal - discount)
 
   const totalQty = cart.reduce(
     (sum, item) =>
@@ -69,6 +119,9 @@ export default function OrderConfirm() {
     const nextOrder = {
       ...order,
       cart,
+      subtotal,
+      discount,
+      promotionTitle: applicablePromotion?.title || applicablePromotion?.name || '',
       total,
       totalQty,
       status: 'confirmed',
@@ -96,14 +149,6 @@ export default function OrderConfirm() {
           textAlign: 'center',
         }}
       >
-        <div
-          style={{
-            fontSize: 38,
-            marginBottom: 8,
-          }}
-        >
-          🧾
-        </div>
 
         <h3
           style={{
@@ -207,6 +252,21 @@ export default function OrderConfirm() {
             {totalQty} รายการ
           </b>
         </div>
+
+        {discount > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              marginTop: 12,
+              color: '#16803c',
+              fontSize: 15,
+            }}
+          >
+            <span>ส่วนลด{applicablePromotion?.title ? ` (${applicablePromotion.title})` : ' โปรโมชั่น'}</span>
+            <b>-{baht(discount)}</b>
+          </div>
+        )}
 
         {/* =================================================
             ยอดรวม

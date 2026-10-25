@@ -3,8 +3,13 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  // host: true = เครื่องอื่นในร้าน (มือถือ/แท็บเล็ต) เปิดผ่าน IP ของเครื่องนี้ได้
   server: {
     host: true,
+    // อนุญาตให้เปิดผ่านโดเมน tunnel (trycloudflare.com)
+    allowedHosts: ['.trycloudflare.com'],
+    // ส่งคำขอ /api ต่อไปที่ backend ในเครื่อง
+    proxy: {
+      '/api': 'http://localhost:3001',
+    },
   },
 })

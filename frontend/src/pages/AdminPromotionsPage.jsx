@@ -7,6 +7,7 @@ import {
 import { Link } from 'react-router-dom'
 
 import { api } from '../api'
+import AdminBottomNav from '../components/AdminBottomNav'
 
 
 // =====================================================
@@ -374,7 +375,7 @@ export function promotionSummary(promo) {
     return `แจก ${g.prizeCount} รางวัล คนละ ${g.prizePerPerson || 1} ตัว`
   }
 
-  if (promo.type === 'bulk' && p.minQty) {
+  if (['bulk', 'discount'].includes(promo.type) && p.minQty) {
     return `ซื้อ ${p.minQty} ตัวขึ้นไป รับราคาพิเศษ`
   }
 
@@ -493,7 +494,7 @@ function seedPromotions() {
   ]
 }
 
-const USE_LOCAL_PROMOTIONS = true
+const USE_LOCAL_PROMOTIONS = false
 
 async function fetchPromotions() {
   if (!USE_LOCAL_PROMOTIONS) {
@@ -1375,12 +1376,20 @@ export default function AdminPromotionsPage() {
     if (
       form.type === 'bulk' ||
       form.type === 'discount' ||
-      form.type === 'vip'
+      form.type === 'vip' ||
+      form.type === 'festival' ||
+      form.type === 'other'
     ) {
       return (
         <>
-          {form.type === 'bulk' && (
-            <Field label="ซื้อตั้งแต่ (ตัว)">
+          {(form.type === 'festival' || form.type === 'other') && (
+            <small style={{ display: 'block', marginBottom: 8, color: '#777' }}>
+              ถ้าต้องการให้ระบบลดราคาให้ลูกค้าอัตโนมัติ ให้กรอก “ส่วนลด” ด้านล่าง (เว้นว่าง = เป็นแค่ประกาศ ไม่ลดราคา)
+            </small>
+          )}
+
+          {(form.type === 'bulk' || form.type === 'discount' || form.type === 'festival' || form.type === 'other') && (
+            <Field label="ซื้อตั้งแต่ (ตัว) — ไม่ถึงจำนวนนี้จะไม่ลด">
               <input
                 type="number"
                 min="0"
@@ -1463,14 +1472,14 @@ export default function AdminPromotionsPage() {
       )
     }
 
-    if (promo.type === 'bulk' && p.minQty) {
+    if (['bulk', 'discount', 'festival', 'other'].includes(promo.type) && p.minQty) {
       rows.push(
         <DetailRow key="min" label="ซื้อตั้งแต่" value={`${p.minQty} ตัวขึ้นไป`} />
       )
     }
 
     if (
-      ['bulk', 'discount', 'vip'].includes(promo.type) &&
+      ['bulk', 'discount', 'vip', 'festival', 'other'].includes(promo.type) &&
       p.discountValue
     ) {
       const unit =
@@ -2147,57 +2156,8 @@ export default function AdminPromotionsPage() {
       )}
 
 
-      {/* =====================================================
-          ADMIN BOTTOM NAVIGATION
-      ===================================================== */}
-
-      <nav
-        style={{
-          position: 'fixed', left: 0, right: 0, bottom: 0,
-          height: 74, background: '#ff1111', display: 'flex',
-          justifyContent: 'center', zIndex: 3000,
-          boxShadow: '0 -2px 10px rgba(0,0,0,0.12)',
-        }}
-      >
-        <div
-          style={{ width: '100%', maxWidth: 2000, display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)', alignItems: 'stretch' }}
-        >
-          <Link to="/admin" style={{ ...navLinkStyle, transition: 'background 0.2s' }}>
-            <HomeIcon size={26} />
-            <span>หน้าหลัก</span>
-          </Link>
-
-          <Link to="/admin/sales" style={navLinkStyle}>
-            <ReceiptIcon size={27} />
-            <span>ประวัติการขาย</span>
-          </Link>
-
-          <Link to="/admin/products" style={navLinkStyle}>
-            <ShoppingBagIcon size={26} />
-            <span>แก้ไขสินค้า</span>
-          </Link>
-
-          <Link
-            to="/admin/promotions"
-            style={{
-              ...navLinkStyle,
-              fontWeight: 700,
-              background: 'rgba(255,255,255,0.20)',
-              borderRadius: '12px 12px 0 0',
-              marginTop: 4,
-            }}
-          >
-            <GiftIcon size={26} />
-            <span>โปรโมชั่น</span>
-          </Link>
-
-          <Link to="/admin/branches" style={navLinkStyle}>
-            <BuildingIcon size={26} />
-            <span>จัดการสาขา</span>
-          </Link>
-        </div>
-      </nav>
+      {/* แถบเมนูล่างของ Admin (ใช้ร่วมกันทุกหน้า) */}
+      <AdminBottomNav />
     </div>
   )
 

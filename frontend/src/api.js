@@ -683,6 +683,39 @@ export const api = {
       `/promotions/active?branchId=${branchId}`
     ),
 
+  // โปรโมชั่น/กิจกรรมที่แอดมินสร้าง (แสดงที่หน้าหลักพนักงาน)
+  getShopPromotions: (
+    branchId
+  ) =>
+    apiFetch(
+      `/promotions/shop?branchId=${branchId}`
+    ),
+
+  // ตั้งค่า PromptPay สำหรับ QR ของพนักงาน
+  getPaymentConfig: () => apiFetch('/public/config'),
+
+  // ส่งภาพสลิปจากกล้องไปผูกกับออเดอร์ขายหน้าร้าน
+  uploadStaffOrderSlip: async (orderId, blob) => {
+    const token = getToken()
+    const res = await fetch(`${BASE_URL}/orders/${Number(orderId)}/slip`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': blob?.type || 'image/jpeg',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: blob,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data?.error || 'ส่งสลิปไม่สำเร็จ')
+    return data
+  },
+
+  // เรียก AI ตรวจสลิปของออเดอร์ขายหน้าร้าน
+  checkStaffOrderSlip: async (orderId) => {
+    const data = await post(`/orders/${Number(orderId)}/ai-check-slip`, {})
+    return data?.result || data
+  },
+
   // ===================================================
   // PROMOTION ADMIN
   // ===================================================
@@ -1026,6 +1059,65 @@ export const api = {
       payload
     ),
 
+  // ---------- ล็อตวัตถุดิบ (FEFO/FIFO) ----------
+  getRawLotSummary: (
+    branchId,
+    days = 3
+  ) =>
+    apiFetch(
+      `/stock/lots/${branchId}/summary?days=${days}`
+    ),
+
+  getRawLots: (
+    branchId,
+    params = {}
+  ) =>
+    apiFetch(
+      `/stock/lots/${branchId}?${new URLSearchParams(
+        Object.entries(params).filter(([, v]) => v !== '' && v != null)
+      )}`
+    ),
+
+  wasteRawLot: (
+    payload
+  ) =>
+    post(
+      '/stock/lots/waste',
+      payload
+    ),
+
+  stocktakeRaw: (
+    payload
+  ) =>
+    post(
+      '/stock/lots/stocktake',
+      payload
+    ),
+
+  // รอบ 15: แช่แข็ง / ละลาย  payload = { lotId, to: 'frozen'|'thawed', qty? }
+  moveRawLot: (
+    payload
+  ) =>
+    post(
+      '/stock/lots/move',
+      payload
+    ),
+
+  // รอบ 15: ตั้งอายุเก็บมาตรฐาน payload = { defaultStorage, chilledDays, frozenDays, thawedDays }
+  setMaterialShelfLife: (
+    materialId,
+    payload
+  ) =>
+    apiFetch(
+      `/stock/lots/material/${materialId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(
+          payload
+        ),
+      }
+    ),
+
   // ===================================================
   // PREP
   // ===================================================
@@ -1038,6 +1130,18 @@ export const api = {
       `/stock/prep/${branchId}?category=${encodeURIComponent(
         category
       )}`
+    ),
+
+  getPrepRecipes: () =>
+    apiFetch('/stock/prep-recipes'),
+
+  discardPrepBatch: (
+    id,
+    payload = {}
+  ) =>
+    post(
+      `/stock/prep/${id}/discard`,
+      payload
     ),
 
   startPrep: (
@@ -1059,6 +1163,17 @@ export const api = {
       '/stock/ready/produce',
       payload
     ),
+
+  // ===================================================
+  // ข้าวเหนียว (พนักงานขายบันทึกเอง)
+  // ===================================================
+
+  getStickyRice: branchId =>
+    apiFetch(`/sticky-rice/${encodeURIComponent(branchId)}`),
+
+  // { branchId, kgBought, price, bagsMade }
+  recordStickyRice: payload =>
+    post('/sticky-rice/record', payload),
 }
 
 // =====================================================
@@ -1246,7 +1361,70 @@ export const PAY_LABEL = {
 const patch = (path, body) =>
   apiFetch(path, { method: 'PATCH', body: JSON.stringify(body) })
 
+// โหลดรูปสลิป (ต้องแนบ token ล็อกอิน จึงโหลดเป็น blob แล้วสร้างลิงก์ชั่วคราวให้ <img>)
+export async function fetchSlipUrl(path) {
+  const token = getToken()
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+
+  if (!res.ok) {
+    let message = `โหลดสลิปไม่สำเร็จ (${res.status})`
+
+    try {
+      const data = await res.json()
+      if (data?.error) message = data.error
+    } catch {
+      // ใช้ข้อความเริ่มต้น
+    }
+
+    throw new Error(message)
+  }
+
+  return URL.createObjectURL(await res.blob())
+}
+
 export const customerApi = {
+  // ออเดอร์/การจองที่ลูกค้าแนบสลิปแล้ว รอพนักงานตรวจสลิป
+  inbox: branchId =>
+    apiFetch(`/customer/inbox?branchId=${encodeURIComponent(branchId)}`),
+
+  confirmOrder: (id, bankReference) =>
+    post(`/customer/orders/${id}/confirm-payment`, { bankReference }),
+
+  // ไม่รับออเดอร์ = ยกเลิก (ต้องมี reason หรือ calledCustomer: true อย่างใดอย่างหนึ่ง)
+  rejectOrder: (id, reason, calledCustomer = false) =>
+    post(`/customer/orders/${id}/reject`, { reason, calledCustomer }),
+
+  // ออเดอร์ที่ลูกค้ายังไม่โอน/ยังไม่แนบสลิป
+  unpaid: branchId =>
+    apiFetch(`/customer/unpaid?branchId=${encodeURIComponent(branchId)}`),
+
+  cancelOrder: (id, reason, calledCustomer = false) =>
+    post(`/customer/orders/${id}/cancel`, { reason, calledCustomer }),
+
+  // ออเดอร์ที่ยกเลิกแล้ว (7 วันล่าสุด) + ลบออกจากระบบ
+  cancelledOrders: branchId =>
+    apiFetch(`/customer/cancelled?branchId=${encodeURIComponent(branchId)}`),
+
+  deleteOrder: id =>
+    apiFetch(`/customer/orders/${id}`, { method: 'DELETE' }),
+
+  confirmDeposit: (id, bankReference) =>
+    post(`/customer/reservations/${id}/confirm-deposit`, { bankReference }),
+
+  rejectReservation: (id, reason, calledCustomer = false) =>
+    post(`/customer/reservations/${id}/reject`, { reason, calledCustomer }),
+
+  orderSlipPath: id => `/customer/orders/${id}/slip`,
+  reservationSlipPath: id => `/customer/reservations/${id}/slip`,
+
+  // AI ตรวจสลิป (ตัวช่วยคัดกรอง — พนักงานยังต้องกดยืนยันเอง)
+  aiStatus: () => apiFetch('/customer/ai-status'),
+  aiCheckOrder: id => post(`/customer/orders/${id}/ai-check-slip`, {}),
+  aiCheckReservation: id => post(`/customer/reservations/${id}/ai-check-slip`, {}),
+
   orders: branchId =>
     apiFetch(`/customer/orders?branchId=${encodeURIComponent(branchId)}`),
 
@@ -1265,4 +1443,83 @@ export const customerApi = {
 
   reservationCancel: (id, body) =>
     post(`/customer/reservations/${id}/cancel`, body),
+}
+
+// =====================================================
+// กล่องออเดอร์/การจองจากลูกค้าบนหน้า Admin — /api/admin
+// =====================================================
+
+export const adminCustomerApi = {
+  orderSlipPath: id => `/admin/customer-orders/${id}/slip`,
+  reservationSlipPath: id => `/admin/customer-reservations/${id}/slip`,
+
+  reviews: branchId =>
+    apiFetch(
+      `/admin/customer-reviews${
+        branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''
+      }`
+    ),
+
+  inbox: branchId =>
+    apiFetch(
+      `/admin/customer-inbox${
+        branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''
+      }`
+    ),
+
+  confirmOrder: (id, bankReference) =>
+    post(`/admin/customer-orders/${id}/confirm-payment`, { bankReference }),
+
+  rejectOrder: (id, reason) =>
+    post(`/admin/customer-orders/${id}/reject`, { reason }),
+
+  confirmDeposit: (id, bankReference) =>
+    post(`/admin/customer-reservations/${id}/confirm-deposit`, { bankReference }),
+
+  rejectReservation: (id, reason) =>
+    post(`/admin/customer-reservations/${id}/reject`, { reason }),
+}
+
+
+// =====================================================
+// วันหยุดร้าน (Admin) — /api/admin/closures
+// =====================================================
+
+export const adminClosuresApi = {
+  list: () => apiFetch('/admin/closures'),
+
+  // หยุดเป็นช่วงวัน (วันเดียว = startDate เท่ากับ endDate หรือไม่ส่ง endDate)
+  addRange: ({ branchId, startDate, endDate, reason }) =>
+    post('/admin/closures', { kind: 'range', branchId: branchId || null, startDate, endDate, reason }),
+
+  // หยุดประจำทุกสัปดาห์ (weekday 0 = อาทิตย์ ... 6 = เสาร์)
+  addWeekly: ({ branchId, weekday, reason }) =>
+    post('/admin/closures', { kind: 'weekly', branchId: branchId || null, weekday, reason }),
+
+  remove: id => apiFetch(`/admin/closures/${id}`, { method: 'DELETE' }),
+}
+
+
+// =====================================================
+// ประวัติสต็อก (Admin) — /api/admin/stock-history
+//   kind = 'raw' (วัตถุดิบแบบล็อต) | 'menu' (สินค้าพร้อมขาย)
+// =====================================================
+
+const qs = params =>
+  Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&')
+
+export const adminStockHistoryApi = {
+  calendar: ({ branchId, month, kind }) =>
+    apiFetch(`/admin/stock-history/calendar?${qs({ branchId, month, kind })}`),
+
+  day: ({ branchId, date, kind }) =>
+    apiFetch(`/admin/stock-history/day?${qs({ branchId, date, kind })}`),
+
+  lots: ({ branchId, materialId, status, q, limit }) =>
+    apiFetch(`/admin/stock-history/lots?${qs({ branchId, materialId, status, q, limit })}`),
+
+  lot: id => apiFetch(`/admin/stock-history/lots/${id}`),
 }

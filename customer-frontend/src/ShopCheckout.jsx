@@ -10,47 +10,87 @@ import {
   unitPrice,
   depositFor,
 } from './shopApi'
+import DeliveryBox from './DeliveryBox'
+import { rememberOrder } from './myOrders'
+import { loadBuyer, rememberPlace, saveBuyer } from './savedPlaces'
+import { problemText, stockProblems } from './stock'
+import { ClosuresNote, thaiDay, useClosures } from './Closures'
 
 const toLocalInput = (date) => {
   const pad = (n) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-const DELIVERY_MIN_ITEMS = Number(import.meta.env.VITE_DELIVERY_MIN_ITEMS || 5)
-const DELIVERY_FEE = Number(import.meta.env.VITE_DELIVERY_FEE || 30)
-const PROMPTPAY_ID = (import.meta.env.VITE_PROMPTPAY_ID || '').replace(/\D/g, '')
-const FACEBOOK_URL =
-  import.meta.env.VITE_SHOP_FACEBOOK_URL ||
-  'https://www.facebook.com/profile.php?id=100090386508496'
-const FACEBOOK_LIVE_URL = import.meta.env.VITE_SHOP_FACEBOOK_LIVE_URL || ''
+// ค่าสำรองกรณี backend ไม่ส่งค่ามา (ค่าจริงตั้งที่ backend/.env แล้วส่งผ่าน /api/public/config)
+const ENV_MIN_ITEMS = Number(import.meta.env.VITE_DELIVERY_MIN_ITEMS || 5)
+const ENV_DELIVERY_FEE = Number(import.meta.env.VITE_DELIVERY_FEE || 30)
 
 export default function ShopCheckout() {
   const navigate = useNavigate()
   const shop = useShop()
   const isReserve = shop.mode === 'reserve'
 
+  // วิธีรับสินค้า/ที่อยู่/พิกัด เก็บร่วมกับหน้าตะกร้า (ใช้ได้ทั้งสั่งซื้อเลยและจองล่วงหน้า)
+  const { address, lat, lng } = shop.delivery
+  const fulfillment = shop.delivery.method
+
   const [cfg, setCfg] = useState(null)
   const [promotions, setPromotions] = useState([])
-  const [name, setName] = useState('')
-  const [phone, setPhone] = useState('')
+  // จำชื่อ/เบอร์จากการสั่งครั้งก่อน ไม่ต้องกรอกใหม่ (แก้ไขได้)
+  const [name, setName] = useState(() => loadBuyer().name)
+  const [phone, setPhone] = useState(() => loadBuyer().phone)
   const [pickupAt, setPickupAt] = useState('')
   const [note, setNote] = useState('')
-  const [fulfillment, setFulfillment] = useState('pickup')
-  const [address, setAddress] = useState('')
-  const [lat, setLat] = useState(null)
-  const [lng, setLng] = useState(null)
   const [newCustomer, setNewCustomer] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [qrError, setQrError] = useState(false)
+
+  // วันหยุดร้าน: วันนี้หยุด = สั่งซื้อเลยไม่ได้ / จองวันที่ร้านหยุดไม่ได้
+  const closures = useClosures(shop.branchId)
+  const pickupDay = pickupAt ? pickupAt.slice(0, 10) : ''
+  const pickupClosed = isReserve && pickupDay ? closures.reasonOn(pickupDay) : null
+  const orderBlocked = !isReserve && closures.closedToday
+  const closedBlock = orderBlocked || Boolean(pickupClosed)
 
   const localIdRef = useRef(newLocalId())
+  const minItems = cfg?.deliveryMinItems ?? ENV_MIN_ITEMS
+  const baseFee = cfg?.deliveryFee ?? ENV_DELIVERY_FEE
   const itemCount = shop.cart.reduce((sum, item) => sum + item.qty, 0)
-  const canDeliver = itemCount >= DELIVERY_MIN_ITEMS && !isReserve
-  const freeDelivery = fulfillment === 'delivery' && newCustomer
+  // ส่งถึงที่เลือกได้ทุกออเดอร์ (รวมการจองล่วงหน้า) — ค่าส่งฟรีเมื่อสั่งครบจำนวนที่ร้านกำหนดหรือเป็นลูกค้าใหม่
+  const freeDelivery =
+    fulfillment === 'delivery' && (itemCount >= minItems || newCustomer)
   const deliveryFee =
-    fulfillment === 'delivery' && !freeDelivery ? DELIVERY_FEE : 0
-  const grandTotal = shop.total + deliveryFee
+    fulfillment === 'delivery' && !freeDelivery ? baseFee : 0
+
+  // แสดงส่วนลดโปรโมชั่นที่แอดมินเปิดให้ลูกค้า โดยยอดจริงจะคำนวณซ้ำที่เซิร์ฟเวอร์
+  const applicablePromotion = promotions.find((promo) => {
+    if (!['discount', 'bulk', 'vip', 'festival', 'other'].includes(String(promo.type || '').toLowerCase())) return false
+    const pricing = promo.pricing || {}
+    const productName = String(promo.productName || '').trim().toLocaleLowerCase('th')
+    const eligible = productName
+      ? shop.cart.filter((item) => String(item.name || '').trim().toLocaleLowerCase('th') === productName)
+      : shop.cart
+    if (!eligible.length) return false
+    const qty = eligible.reduce((sum, item) => sum + Number(item.qty || 0), 0)
+    if (Number(pricing.minQty || 0) > qty) return false
+    return Number(pricing.discountValue || 0) > 0
+  })
+  const promoEligibleItems = applicablePromotion
+    ? (applicablePromotion.productName
+        ? shop.cart.filter((item) => String(item.name || '').trim().toLocaleLowerCase('th') === String(applicablePromotion.productName).trim().toLocaleLowerCase('th'))
+        : shop.cart)
+    : []
+  const promoEligibleSubtotal = promoEligibleItems.reduce((sum, item) => sum + unitPrice(item) * item.qty, 0)
+  const promoValue = Number(applicablePromotion?.pricing?.discountValue || 0)
+  const previewDiscount = !applicablePromotion ? 0
+    : applicablePromotion.pricing?.discountType === 'percent'
+      ? Math.round(promoEligibleSubtotal * Math.min(promoValue, 100)) / 100
+      : applicablePromotion.pricing?.discountType === 'baht'
+        ? Math.min(promoValue, promoEligibleSubtotal)
+        : applicablePromotion.pricing?.discountType === 'special_price'
+          ? promoEligibleItems.reduce((sum, item) => sum + Math.max(unitPrice(item) - promoValue, 0) * item.qty, 0)
+          : 0
+  const grandTotal = Math.max(0, shop.total - previewDiscount) + deliveryFee
 
   useEffect(() => {
     let mounted = true
@@ -63,9 +103,9 @@ export default function ShopCheckout() {
         if (mounted) setError(err.message || 'โหลดการตั้งค่าร้านไม่สำเร็จ')
       })
 
-    shopApi.promotions(Number(shop.branchId))
-      .then((data) => {
-        if (mounted) setPromotions(Array.isArray(data) ? data : [])
+    shopApi.promotions(shop.branchId)
+      .then((rows) => {
+        if (mounted) setPromotions(Array.isArray(rows) ? rows : [])
       })
       .catch(() => {
         if (mounted) setPromotions([])
@@ -74,22 +114,25 @@ export default function ShopCheckout() {
     return () => {
       mounted = false
     }
-  }, [shop.branchId])
-
-  useEffect(() => {
-    if (!canDeliver && fulfillment === 'delivery') {
-      setFulfillment('pickup')
-    }
-  }, [canDeliver, fulfillment])
+  }, [])
 
   useEffect(() => {
     const cleanPhone = phone.replace(/\D/g, '')
 
-    if (cleanPhone.length >= 9) {
-      const known = localStorage.getItem(
-        `poultryos_customer_seen_${cleanPhone}`
-      )
-      setNewCustomer(!known)
+    if (!/^0\d{8,9}$/.test(cleanPhone)) {
+      setNewCustomer(true)
+      return undefined
+    }
+
+    let alive = true
+
+    shopApi
+      .customerStatus(cleanPhone)
+      .then((r) => alive && setNewCustomer(r?.isNew !== false))
+      .catch(() => alive && setNewCustomer(true))
+
+    return () => {
+      alive = false
     }
   }, [phone])
 
@@ -108,29 +151,6 @@ export default function ShopCheckout() {
     ? toLocalInput(new Date(Date.now() + cfg.maxDaysAhead * 86400000))
     : ''
 
-  const getLocation = () => {
-    if (!navigator.geolocation) {
-      setError('อุปกรณ์นี้ไม่รองรับการระบุตำแหน่ง')
-      return
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const latitude = position.coords.latitude
-        const longitude = position.coords.longitude
-
-        setLat(latitude)
-        setLng(longitude)
-        setAddress(`พิกัด ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`)
-        setError('')
-      },
-      () => {
-        setError('ไม่สามารถรับพิกัดได้ กรุณาอนุญาตตำแหน่งหรือกรอกที่อยู่เอง')
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    )
-  }
-
   const submit = async () => {
     setError('')
 
@@ -146,32 +166,49 @@ export default function ShopCheckout() {
       return
     }
 
+    if (orderBlocked) {
+      setError('วันนี้ร้านหยุดทำการ สั่งซื้อเลยไม่ได้ — กรุณาจองล่วงหน้าในวันที่ร้านเปิด')
+      return
+    }
+
     if (isReserve && !pickupAt) {
       setError('กรุณาเลือกวันและเวลารับสินค้า')
       return
     }
 
-    if (
-      fulfillment === 'delivery' &&
-      (!canDeliver || !address.trim())
-    ) {
-      setError(
-        `การจัดส่งต้องสั่งอย่างน้อย ${DELIVERY_MIN_ITEMS} ชิ้น และระบุที่อยู่`
-      )
+    if (pickupClosed) {
+      setError(`ร้านหยุดทำการ${thaiDay(pickupDay, true)} (${pickupClosed}) จองวันหยุดไม่ได้ กรุณาเลือกวันอื่น`)
       return
     }
 
-    if (!PROMPTPAY_ID) {
-      setError('ร้านยังไม่ได้ตั้งค่า PromptPay ID จึงยังไม่สามารถแสดง QR สำหรับชำระเงินได้')
+    if (fulfillment === 'delivery' && !address.trim()) {
+      setError('กรุณาระบุที่อยู่จัดส่ง หรือปักหมุดบนแผนที่')
       return
     }
 
     setBusy(true)
 
+    // สั่งซื้อเลย: เช็กสต็อกล่าสุดอีกครั้งก่อนส่ง (อาจมีคนสั่งตัดหน้าไปแล้ว)
+    if (!isReserve) {
+      try {
+        const fresh = await shopApi.menus(shop.branchId)
+        const problems = stockProblems(shop.cart, fresh)
+
+        if (problems.length > 0) {
+          setError(`สต็อกไม่พอ: ${problems.map(problemText).join(' · ')} — กรุณากลับไปแก้ตะกร้า`)
+          setBusy(false)
+          return
+        }
+      } catch {
+        // เช็กไม่ได้ก็ให้เซิร์ฟเวอร์ตรวจแทน (เซิร์ฟเวอร์ตรวจสต็อกทุกครั้งอยู่แล้ว)
+      }
+    }
+
     const items = shop.cart.map((item) => ({
       menuId: item.menuId,
       size: item.size,
       qty: item.qty,
+      note: item.note || '',
     }))
 
     try {
@@ -201,26 +238,26 @@ export default function ShopCheckout() {
         throw new Error('ระบบไม่ได้ส่งเลขอ้างอิงคำสั่งซื้อกลับมา กรุณาตรวจสอบกับร้านก่อนสั่งซ้ำ')
       }
 
-      localStorage.setItem(
-        `poultryos_customer_seen_${cleanPhone}`,
-        '1'
-      )
+      rememberOrder(result.receiptToken)
 
+      // จำข้อมูลผู้สั่งและที่อยู่จัดส่งไว้ใช้ครั้งหน้า
+      saveBuyer({ name, phone: cleanPhone })
+      if (fulfillment === 'delivery' && lat != null && lng != null && address.trim()) {
+        rememberPlace({ address, lat, lng })
+      }
       shop.clear()
-      navigate(`/receipt/${result.receiptToken}`, { replace: true })
+
+      // ไปหน้าสแกน QR ชำระเงิน (ยอดถูกกำหนดจากเซิร์ฟเวอร์)
+      navigate(`/pay/${result.receiptToken}`, { replace: true })
     } catch (err) {
       setError(err.message || 'ส่งคำสั่งซื้อไม่สำเร็จ กรุณาลองใหม่')
       setBusy(false)
     }
   }
 
-  const qrUrl = PROMPTPAY_ID
-    ? `https://promptpay.io/${encodeURIComponent(PROMPTPAY_ID)}/${Math.max(1, Math.round(payNow))}.png`
-    : ''
-
   const mapUrl = lat != null && lng != null
     ? `https://www.google.com/maps?q=${lat},${lng}`
-    : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(import.meta.env.VITE_SHOP_ADDRESS || 'ร้านเป็ดย่างเกลือไก่หมุนขมิ้น ฮาลาล หาดใหญ่')}`
+    : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cfg?.shopAddress || import.meta.env.VITE_SHOP_ADDRESS || 'ร้านเป็ดย่างเกลือไก่หมุนขมิ้น ฮาลาล หาดใหญ่')}`
 
   return (
     <ShopLayout
@@ -229,28 +266,44 @@ export default function ShopCheckout() {
       footer={
         <button
           className="btn-primary"
-          disabled={busy || !cfg}
+          disabled={busy || !cfg || closedBlock}
           onClick={submit}
         >
           {busy
             ? 'กำลังดำเนินการ...'
             : isReserve
-              ? `ดำเนินการจอง · ${baht(payNow)}`
-              : `ส่งคำสั่งซื้อ · ${baht(payNow)}`}
+              ? `ไปชำระมัดจำ · ${baht(payNow)}`
+              : `ไปชำระเงิน · ${baht(payNow)}`}
         </button>
       }
     >
+      {orderBlocked && (
+        <div className="closed-banner" role="alert">
+          <b>วันนี้ร้านหยุดทำการ{closures.todayReason ? ` (${closures.todayReason})` : ''}</b>
+          สั่งซื้อเลยไม่ได้ในวันนี้ แต่จองล่วงหน้าในวันที่ร้านเปิดได้
+          <button
+            type="button"
+            className="btn-outline"
+            style={{ marginTop: 8 }}
+            onClick={() => shop.setMode('reserve')}
+          >
+            เปลี่ยนเป็นจองล่วงหน้า
+          </button>
+        </div>
+      )}
+
       <div className="receipt-box">
         <table className="sum">
           <tbody>
-            {shop.cart.map((item) => (
-              <tr key={`${item.menuId}-${item.size}`}>
+            {shop.cart.map((item, idx) => (
+              <tr key={`${item.menuId}-${item.size}-${idx}`}>
                 <td>
                   {item.name}{' '}
                   {item.hasHalfOption
                     ? `(${sizeLabel(item.size)})`
                     : ''}{' '}
                   × {item.qty}
+                  {item.note && <div className="muted">📝 {item.note}</div>}
                 </td>
                 <td>{baht(unitPrice(item) * item.qty)}</td>
               </tr>
@@ -261,84 +314,44 @@ export default function ShopCheckout() {
         <div className="divider" />
 
         <div className="row">
-          <b>ยอดสินค้า</b>
+          <span>ยอดสินค้า</span>
           <b>{baht(shop.total)}</b>
         </div>
 
+        {previewDiscount > 0 && applicablePromotion && (
+          <div className="row" style={{ marginTop: 8, color: '#d92323' }}>
+            <span>ส่วนลด · {applicablePromotion.name || 'โปรโมชั่น'}</span>
+            <b>-{baht(previewDiscount)}</b>
+          </div>
+        )}
+
         {fulfillment === 'delivery' && (
           <div className="row" style={{ marginTop: 8 }}>
-            <span>ค่าจัดส่ง {freeDelivery ? '(ลูกค้าใหม่ ฟรี)' : ''}</span>
+            <span>ค่าจัดส่ง {freeDelivery ? '(ส่งฟรี)' : ''}</span>
             <b>{deliveryFee ? baht(deliveryFee) : 'ฟรี'}</b>
           </div>
         )}
 
         <div className="divider" />
 
-        <div className="row">
-          <b>ยอดรวม</b>
-          <b>{baht(grandTotal)}</b>
+        <div className="row total-row">
+          <span>ยอดรวม</span>
+          <b className="total-amount">{baht(grandTotal)}</b>
         </div>
 
         {isReserve && cfg && (
           <>
-            <div className="row">
-              <span>มัดจำ ({cfg.depositPercent}%)</span>
-              <b>{baht(deposit)}</b>
+            <div className="row" style={{ marginTop: 8 }}>
+              <span>มัดจำ ({cfg.depositPercent}%) — ชำระตอนนี้</span>
+              <b className="pay-now-amount">{baht(deposit)}</b>
             </div>
-            <div className="row">
+            <div className="row" style={{ marginTop: 4 }}>
               <span>ยอดคงเหลือเมื่อรับสินค้า</span>
               <b>{baht(grandTotal - deposit)}</b>
             </div>
           </>
         )}
       </div>
-
-      {/* โปรโมชั่นจากแอดมิน แสดงก่อนกรอกข้อมูลและชำระเงิน */}
-      <section className="promotion-panel" aria-label="โปรโมชั่นร้าน">
-        <h4>🎉 โปรโมชั่นและกิจกรรมของร้าน</h4>
-
-        {promotions.length > 0 ? (
-          <div className="promotion-list">
-            {promotions.map((promotion) => (
-              <article className="promotion-card" key={promotion.id}>
-                <b>{promotion.name}</b>
-
-                {promotion.description && (
-                  <p>{promotion.description}</p>
-                )}
-
-                {promotion.minOrderAmount > 0 && (
-                  <small>
-                    เมื่อซื้อครบ {baht(promotion.minOrderAmount)}
-                  </small>
-                )}
-
-                {promotion.type === 'giveaway' && (
-                  <p>
-                    🎁 กิจกรรมจับฉลาก ติดตามเงื่อนไขและไลฟ์ได้ที่ Facebook ร้าน
-                  </p>
-                )}
-              </article>
-            ))}
-          </div>
-        ) : (
-          <p className="muted">ขณะนี้ยังไม่มีโปรโมชั่นที่เปิดใช้งาน</p>
-        )}
-
-        <p>
-          <a href={FACEBOOK_URL} target="_blank" rel="noreferrer">
-            ดูข่าวสารและกิจกรรมจับฉลากบน Facebook ร้าน
-          </a>
-        </p>
-
-        {FACEBOOK_LIVE_URL && (
-          <p>
-            <a href={FACEBOOK_LIVE_URL} target="_blank" rel="noreferrer">
-              🔴 เปิดดู Facebook Live
-            </a>
-          </p>
-        )}
-      </section>
 
       <h4>ข้อมูลผู้สั่ง</h4>
 
@@ -357,120 +370,11 @@ export default function ShopCheckout() {
         autoComplete="tel"
       />
 
-      {!isReserve && (
-        <>
-          <h4>วิธีรับสินค้า</h4>
-
-          <div className="seg">
-            <button
-              type="button"
-              className={fulfillment === 'pickup' ? 'on' : ''}
-              onClick={() => setFulfillment('pickup')}
-            >
-              <span className="fulfillment-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 21V8l9-5 9 5v13" />
-                  <path d="M7 21v-9h10v9" />
-                  <path d="M3 8h18" />
-                  <path d="M10 15h4" />
-                </svg>
-              </span>
-              <span>รับที่ร้าน</span>
-            </button>
-
-            <button
-              type="button"
-              className={fulfillment === 'delivery' ? 'on' : ''}
-              disabled={!canDeliver}
-              onClick={() => setFulfillment('delivery')}
-            >
-              <span className="fulfillment-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M2 5h12v12H2z" />
-                  <path d="M14 9h4l4 4v4h-8z" />
-                  <circle cx="6.5" cy="19" r="2" />
-                  <circle cx="18" cy="19" r="2" />
-                  <path d="M14 13h7" />
-                </svg>
-              </span>
-              <span>
-                ส่งถึงที่ {canDeliver ? '' : `(สั่ง ${DELIVERY_MIN_ITEMS} ชิ้นขึ้นไป)`}
-              </span>
-            </button>
-          </div>
-
-          {fulfillment === 'pickup' ? (
-            <div className="note">
-              รับสินค้าที่ร้านได้ตามเวลาทำการ{' '}
-              <a href={mapUrl} target="_blank" rel="noreferrer">
-                เปิดแผนที่ร้าน
-              </a>
-            </div>
-          ) : (
-            <>
-              <div className="note">
-                สั่งอย่างน้อย {DELIVERY_MIN_ITEMS} ชิ้น · ลูกค้าใหม่ส่งฟรี
-                {newCustomer
-                  ? ' (ตรวจจากเบอร์นี้ในอุปกรณ์นี้)'
-                  : ` · ค่าจัดส่ง ${baht(DELIVERY_FEE)}`}
-              </div>
-
-              <textarea
-                placeholder="บ้านเลขที่ ถนน ซอย จุดสังเกต"
-                value={address}
-                onChange={(event) => setAddress(event.target.value)}
-                rows={3}
-              />
-
-              <button
-                type="button"
-                className="btn-outline"
-                style={{ width: '100%', marginBottom: 8 }}
-                onClick={getLocation}
-              >
-                📍 ใช้ตำแหน่งปัจจุบัน / ปักหมุด
-              </button>
-
-              {lat != null && lng != null && (
-                <a
-                  className="btn-outline"
-                  style={{
-                    display: 'block',
-                    textAlign: 'center',
-                    marginBottom: 8,
-                  }}
-                  href={mapUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  เปิดพิกัดที่เลือกใน Google Maps
-                </a>
-              )}
-
-              <div className="shop-map-frame">
-                <iframe
-                  title="แผนที่สำหรับเลือกพื้นที่จัดส่ง"
-                  src={`https://maps.google.com/maps?q=${encodeURIComponent(
-                    lat != null && lng != null
-                      ? `${lat},${lng}`
-                      : address || 'Hat Yai, Songkhla'
-                  )}&output=embed`}
-                  loading="lazy"
-                  allowFullScreen
-                />
-              </div>
-
-              <small className="muted">
-                อนุญาตการเข้าถึงตำแหน่งเพื่อบันทึกพิกัด หรือกรอกที่อยู่และจุดสังเกตให้ครบถ้วน
-              </small>
-            </>
-          )}
-        </>
-      )}
+      <DeliveryBox cfg={cfg} newCustomer={newCustomer} itemCount={itemCount} />
 
       {isReserve && (
         <>
-          <h4>วันและเวลารับสินค้า</h4>
+          <h4>{fulfillment === 'delivery' ? 'วันและเวลาจัดส่ง' : 'วันและเวลารับสินค้า'}</h4>
 
           <input
             type="datetime-local"
@@ -480,12 +384,21 @@ export default function ShopCheckout() {
             onChange={(event) => setPickupAt(event.target.value)}
           />
 
+          {pickupClosed && (
+            <div className="closed-banner" role="alert">
+              <b>ร้านหยุดทำการ{thaiDay(pickupDay, true)}</b>
+              {pickupClosed !== 'ร้านหยุดทำการ' ? `${pickupClosed} · ` : ''}จองวันหยุดไม่ได้ กรุณาเลือกวันรับสินค้าอื่น
+            </div>
+          )}
+
           {cfg && (
             <div className="muted">
               จองล่วงหน้าอย่างน้อย {cfg.minLeadHours} ชั่วโมง · รับสินค้า{' '}
               {cfg.openHour}:00–{cfg.closeHour}:00 น.
             </div>
           )}
+
+          <ClosuresNote closures={closures} title="วันหยุดร้าน (จองวันเหล่านี้ไม่ได้)" />
 
           <input
             placeholder="หมายเหตุ (ไม่บังคับ)"
@@ -498,43 +411,15 @@ export default function ShopCheckout() {
 
       <h4>ชำระเงิน</h4>
 
-      {qrUrl && !qrError ? (
-        <div className="payment-qr">
-          <p>
-            สแกน QR PromptPay เพื่อชำระ{' '}
-            <b>{baht(payNow)}</b>
-          </p>
-
-          <img
-            src={qrUrl}
-            alt={`PromptPay QR ยอด ${payNow} บาท`}
-            onError={() => setQrError(true)}
-          />
-
-          <small>
-            ตรวจสอบชื่อบัญชีปลายทางและยอดเงินก่อนยืนยัน ระบบยังไม่ถือว่าชำระแล้วจนกว่าแอดมินจะตรวจสอบยอดเงินจริง
-          </small>
+      <div className="pay-info">
+        <div className="pay-info-line">
+          <span className="pay-info-badge">PromptPay</span>
+          <span>
+            {isReserve ? 'ชำระมัดจำ' : 'ชำระเต็มจำนวน'} ด้วย QR ที่กำหนดยอดให้อัตโนมัติ
+          </span>
         </div>
-      ) : (
-        <div className="note">
-          {!PROMPTPAY_ID
-            ? 'ร้านยังไม่ได้ตั้งค่า PromptPay ID จึงไม่สามารถสร้าง QR สำหรับบัญชีร้านได้'
-            : 'โหลด QR ไม่สำเร็จ กรุณาตรวจสอบอินเทอร์เน็ตและ PromptPay ID'}
-          <br />
-          ตั้งค่า <code>VITE_PROMPTPAY_ID</code> ในไฟล์{' '}
-          <code>customer-frontend/.env</code> แล้วเปิด Vite ใหม่
-        </div>
-      )}
-
-      <div className="note">
-        สถานะการชำระ: รอตรวจสอบโดยแอดมิน คำสั่งซื้อจะยังไม่ถือว่าชำระแล้วจนกว่าร้านจะตรวจสอบเงินเข้าบัญชีจริง
-      </div>
-
-      <div className="note">
-        ติดตามกิจกรรมจับฉลากได้ที่{' '}
-        <a href={FACEBOOK_URL} target="_blank" rel="noreferrer">
-          Facebook ร้าน
-        </a>
+        <div className="pay-info-amount">{baht(payNow)}</div>
+        <small>กดปุ่มด้านล่างเพื่อไปหน้าสแกน QR — ร้านจะยืนยันหลังตรวจพบเงินเข้าบัญชี</small>
       </div>
 
       {error && <div className="err">{error}</div>}

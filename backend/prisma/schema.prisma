@@ -1,7 +1,3 @@
-// หมายเหตุ: ถ้าฐานข้อมูลถูกสร้างไว้แล้วจาก poultryos_schema_v2.sql
-// แนะนำให้รัน `npx prisma db pull` เพื่อ sync ไฟล์นี้ให้ตรงกับ DB จริง 100%
-// ไฟล์นี้เขียนไว้ให้ตรงกับ schema นั้นแล้ว ใช้เป็นจุดเริ่มต้นได้เลย
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -12,14 +8,19 @@ datasource db {
 }
 
 model Branch {
-  id       Int     @id @default(autoincrement())
-  name     String  @db.VarChar(100)
-  address  String? @db.VarChar(255)
-  code     String? @unique @db.VarChar(20)
-  province String? @db.VarChar(100)
-  phone    String? @db.VarChar(30)
-  isActive Boolean @default(true) @map("is_active")
+  id              Int              @id @default(autoincrement())
+  name            String           @db.VarChar(100)
+  address         String?          @db.VarChar(255)
+  code            String?          @unique @db.VarChar(20)
+  province        String?          @db.VarChar(100)
+  phone           String?          @db.VarChar(30)
+  isActive        Boolean          @default(true) @map("is_active")
+  rawMaterialLots RawMaterialLot[]
+  shifts          Shift[]
+  closures        ShopClosure[]
+  shopPromotions  ShopPromotion[]
 
+  // relations (restored)
   staff               Staff[]
   branchStockRaw      BranchStockRaw[]
   rawMaterialLogs     RawMaterialLog[]
@@ -32,9 +33,36 @@ model Branch {
   reservations        Reservation[]
   otherExpenses       OtherExpense[]
   notifications       Notification[]
-  shifts              Shift[]
 
   @@map("branches")
+}
+
+model ShopPromotion {
+  id        Int      @id @default(autoincrement())
+  branchId  Int?     @map("branch_id")
+  data      Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  branch    Branch?  @relation(fields: [branchId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branchId], map: "shop_promotions_branch_idx")
+  @@map("shop_promotions")
+}
+
+model ShopClosure {
+  id        Int       @id @default(autoincrement())
+  branchId  Int?      @map("branch_id")
+  kind      String    @default("range") @db.VarChar(10)
+  startDate DateTime? @map("start_date") @db.Date
+  endDate   DateTime? @map("end_date") @db.Date
+  weekday   Int?      @db.SmallInt
+  reason    String?   @db.VarChar(255)
+  createdAt DateTime  @default(now()) @map("created_at")
+  branch    Branch?   @relation(fields: [branchId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branchId], map: "shop_closures_branch_idx")
+  @@index([startDate, endDate], map: "shop_closures_dates_idx")
+  @@map("shop_closures")
 }
 
 model ShopSetting {
@@ -48,19 +76,23 @@ model ShopSetting {
 }
 
 model Staff {
-  id        Int      @id @default(autoincrement())
-  name      String   @db.VarChar(100)
-  firstName String?  @map("first_name") @db.VarChar(100)
-  lastName  String?  @map("last_name") @db.VarChar(100)
-  phone     String?  @unique @db.VarChar(20)
-  lineId    String?  @map("line_id") @db.VarChar(50)
-  position  String?  @db.VarChar(20)
-  branchId  Int?     @map("branch_id")
-  branch    Branch?  @relation(fields: [branchId], references: [id])
-  dailyWage Decimal? @map("daily_wage") @db.Decimal(10, 2)
-  pinHash   String?  @map("pin_hash") @db.VarChar(255)
-  active    Boolean  @default(true)
+  id                Int              @id @default(autoincrement())
+  name              String           @db.VarChar(100)
+  position          String           @db.VarChar(20)
+  branchId          Int              @map("branch_id")
+  dailyWage         Decimal?         @default(0) @map("daily_wage") @db.Decimal(10, 2)
+  pinHash           String           @map("pin_hash") @db.VarChar(255)
+  active            Boolean          @default(true)
+  created_at        DateTime         @default(now()) @db.Timestamp(6)
+  firstName         String?          @map("first_name") @db.VarChar(100)
+  lastName          String?          @map("last_name") @db.VarChar(100)
+  phone             String?          @unique @db.VarChar(20)
+  lineId            String?          @map("line_id") @db.VarChar(50)
+  raw_material_lots RawMaterialLot[]
+  shifts            Shift[]
 
+  // relations (restored)
+  branch                Branch               @relation(fields: [branchId], references: [id])
   attendanceAsStaff     Attendance[]         @relation("AttendanceStaff")
   attendanceConfirmedBy Attendance[]         @relation("AttendanceConfirmer")
   rawMaterialLogs       RawMaterialLog[]
@@ -69,31 +101,41 @@ model Staff {
   stockLogs             StockLog[]
   orders                Order[]
   reservations          Reservation[]
-  shifts                Shift[]
 
   @@map("staff")
 }
 
 model Attendance {
-  id            Int       @id @default(autoincrement())
-  staffId       Int?      @map("staff_id")
-  staff         Staff?    @relation("AttendanceStaff", fields: [staffId], references: [id])
-  workDate      DateTime  @map("work_date") @db.Date
-  confirmedById Int?      @map("confirmed_by")
-  confirmedBy   Staff?    @relation("AttendanceConfirmer", fields: [confirmedById], references: [id])
-  localId       String?   @map("local_id") @db.Uuid
-  synced        Boolean   @default(true)
+  id            Int      @id @default(autoincrement())
+  staffId       Int      @map("staff_id")
+  workDate      DateTime @map("work_date") @db.Date
+  confirmedById Int?     @map("confirmed_by")
+  localId       String?  @map("local_id") @db.Uuid
+  synced        Boolean? @default(true)
 
+  // relations (restored)
+  staff       Staff  @relation("AttendanceStaff", fields: [staffId], references: [id])
+  confirmedBy Staff? @relation("AttendanceConfirmer", fields: [confirmedById], references: [id])
+
+  @@unique([staffId, workDate])
+  @@index([staffId, workDate], map: "idx_attendance_staff_month")
   @@map("attendance")
 }
 
 model RawMaterial {
-  id          Int     @id @default(autoincrement())
-  name        String  @db.VarChar(100)
-  unit        String  @db.VarChar(20)
-  costPerUnit Decimal @map("cost_per_unit") @db.Decimal(10, 2)
-  category    String? @db.VarChar(20)
+  id                   Int              @id @default(autoincrement())
+  name                 String           @db.VarChar(100)
+  unit                 String           @db.VarChar(20)
+  costPerUnit          Decimal          @map("cost_per_unit") @db.Decimal(10, 2)
+  updated_at           DateTime         @default(now()) @db.Timestamp(6)
+  category             String?          @db.VarChar(20)
+  defaultStorage       String           @default("ambient") @map("default_storage") @db.VarChar(10)
+  shelfLifeChilledDays Int?             @map("shelf_life_chilled_days")
+  shelfLifeFrozenDays  Int?             @map("shelf_life_frozen_days")
+  shelfLifeThawedDays  Int?             @map("shelf_life_thawed_days")
+  rawMaterialLots      RawMaterialLot[]
 
+  // relations (restored)
   branchStockRaw  BranchStockRaw[]
   rawMaterialLogs RawMaterialLog[]
   prepRecipe      PrepRecipe[]
@@ -103,34 +145,69 @@ model RawMaterial {
 }
 
 model BranchStockRaw {
-  id           Int          @id @default(autoincrement())
-  branchId     Int?         @map("branch_id")
-  branch       Branch?      @relation(fields: [branchId], references: [id])
-  materialId   Int?         @map("material_id")
-  material     RawMaterial? @relation(fields: [materialId], references: [id])
-  qty          Decimal      @default(0) @db.Decimal(10, 3)
-  reorderPoint Decimal?     @default(0) @map("reorder_point") @db.Decimal(10, 3)
+  id           Int      @id @default(autoincrement())
+  branchId     Int?     @map("branch_id")
+  materialId   Int?     @map("material_id")
+  qty          Decimal  @default(0) @db.Decimal(10, 3)
+  reorderPoint Decimal? @default(0) @map("reorder_point") @db.Decimal(10, 3)
+
+  // relations (restored)
+  branch   Branch?      @relation(fields: [branchId], references: [id])
+  material RawMaterial? @relation(fields: [materialId], references: [id])
 
   @@unique([branchId, materialId])
   @@map("branch_stock_raw")
 }
 
 model RawMaterialLog {
-  id         Int          @id @default(autoincrement())
-  branchId   Int?         @map("branch_id")
-  branch     Branch?      @relation(fields: [branchId], references: [id])
-  materialId Int?         @map("material_id")
-  material   RawMaterial? @relation(fields: [materialId], references: [id])
-  type       String       @db.VarChar(10)
-  qty        Decimal      @db.Decimal(10, 3)
-  note       String?      @db.VarChar(255)
-  staffId    Int?         @map("staff_id")
-  staff      Staff?       @relation(fields: [staffId], references: [id])
-  localId    String?      @map("local_id") @db.Uuid
-  synced     Boolean      @default(true)
-  createdAt  DateTime     @default(now()) @map("created_at")
+  id         Int             @id @default(autoincrement())
+  branchId   Int?            @map("branch_id")
+  materialId Int?            @map("material_id")
+  type       String?         @db.VarChar(10)
+  qty        Decimal         @db.Decimal(10, 3)
+  note       String?         @db.VarChar(255)
+  staffId    Int?            @map("staff_id")
+  localId    String?         @map("local_id") @db.Uuid
+  synced     Boolean?        @default(true)
+  createdAt  DateTime?       @default(now()) @map("created_at") @db.Timestamp(6)
+  lotId      Int?            @map("lot_id")
+  lot        RawMaterialLot? @relation(fields: [lotId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  // relations (restored)
+  branch   Branch?      @relation(fields: [branchId], references: [id])
+  material RawMaterial? @relation(fields: [materialId], references: [id])
+  staff    Staff?       @relation(fields: [staffId], references: [id])
 
   @@map("raw_material_logs")
+}
+
+model RawMaterialLot {
+  id           Int              @id @default(autoincrement())
+  branchId     Int              @map("branch_id")
+  materialId   Int              @map("material_id")
+  lotNo        String           @map("lot_no") @db.VarChar(50)
+  qtyReceived  Decimal          @map("qty_received") @db.Decimal(10, 3)
+  qtyRemaining Decimal          @map("qty_remaining") @db.Decimal(10, 3)
+  unitCost     Decimal?         @map("unit_cost") @db.Decimal(10, 2)
+  supplier     String?          @db.VarChar(100)
+  receivedAt   DateTime         @default(now()) @map("received_at") @db.Timestamp(6)
+  expiresAt    DateTime?        @map("expires_at") @db.Timestamp(6)
+  status       String           @default("active") @db.VarChar(10)
+  note         String?          @db.VarChar(255)
+  staffId      Int?             @map("staff_id")
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamp(6)
+  storage      String           @default("ambient") @db.VarChar(10)
+  frozenAt     DateTime?        @map("frozen_at") @db.Timestamp(6)
+  thawedAt     DateTime?        @map("thawed_at") @db.Timestamp(6)
+  expirySource String           @default("none") @map("expiry_source") @db.VarChar(10)
+  logs         RawMaterialLog[]
+  branch       Branch           @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  material     RawMaterial      @relation(fields: [materialId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  staff        Staff?           @relation(fields: [staffId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([branchId, materialId, lotNo])
+  @@index([branchId, materialId, status, expiresAt, receivedAt], map: "idx_raw_lots_pick")
+  @@map("raw_material_lots")
 }
 
 model PrepItem {
@@ -140,6 +217,7 @@ model PrepItem {
   shelfLifeHours Int?    @map("shelf_life_hours")
   category       String? @db.VarChar(20)
 
+  // relations (restored)
   prepRecipe  PrepRecipe[]
   prepBatches PrepBatch[]
   menuRecipe  MenuRecipe[]
@@ -148,11 +226,13 @@ model PrepItem {
 }
 
 model PrepRecipe {
-  prepItemId Int         @map("prep_item_id")
-  prepItem   PrepItem    @relation(fields: [prepItemId], references: [id])
-  materialId Int         @map("material_id")
-  material   RawMaterial @relation(fields: [materialId], references: [id])
-  qtyPerUnit Decimal     @map("qty_per_unit") @db.Decimal(10, 3)
+  prepItemId Int     @map("prep_item_id")
+  materialId Int     @map("material_id")
+  qtyPerUnit Decimal @map("qty_per_unit") @db.Decimal(10, 3)
+
+  // relations (restored)
+  prepItem PrepItem    @relation(fields: [prepItemId], references: [id])
+  material RawMaterial @relation(fields: [materialId], references: [id])
 
   @@id([prepItemId, materialId])
   @@map("prep_recipe")
@@ -161,20 +241,21 @@ model PrepRecipe {
 model PrepBatch {
   id           Int       @id @default(autoincrement())
   branchId     Int?      @map("branch_id")
-  branch       Branch?   @relation(fields: [branchId], references: [id])
   prepItemId   Int?      @map("prep_item_id")
-  prepItem     PrepItem? @relation(fields: [prepItemId], references: [id])
   batchNo      String?   @map("batch_no") @db.VarChar(50)
   qtyProduced  Decimal   @map("qty_produced") @db.Decimal(10, 3)
   qtyRemaining Decimal   @map("qty_remaining") @db.Decimal(10, 3)
   preparedById Int?      @map("prepared_by")
-  preparedBy   Staff?    @relation(fields: [preparedById], references: [id])
-  preparedAt   DateTime  @default(now()) @map("prepared_at")
-  expiresAt    DateTime? @map("expires_at")
-  status       String    @default("active") @db.VarChar(10)
+  preparedAt   DateTime? @default(now()) @map("prepared_at") @db.Timestamp(6)
+  expiresAt    DateTime? @map("expires_at") @db.Timestamp(6)
+  status       String?   @default("active") @db.VarChar(10)
   localId      String?   @map("local_id") @db.Uuid
-  synced       Boolean   @default(true)
+  synced       Boolean?  @default(true)
 
+  // relations (restored)
+  branch              Branch?              @relation(fields: [branchId], references: [id])
+  prepItem            PrepItem?            @relation(fields: [prepItemId], references: [id])
+  preparedBy          Staff?               @relation(fields: [preparedById], references: [id])
   readyProductionLogs ReadyProductionLog[]
 
   @@map("prep_batches")
@@ -185,9 +266,12 @@ model Menu {
   name          String  @db.VarChar(100)
   unit          String  @db.VarChar(20)
   price         Decimal @db.Decimal(10, 2)
-  hasHalfOption Boolean @default(false) @map("has_half_option")
+  hasHalfOption Boolean @default(true) @map("has_half_option")
+  active        Boolean @default(true)
   category      String? @db.VarChar(20)
+  cost          Decimal @default(0) @db.Decimal(10, 2)
 
+  // relations (restored)
   menuRecipe          MenuRecipe[]
   readyProductionLogs ReadyProductionLog[]
   branchStock         BranchStock[]
@@ -201,66 +285,76 @@ model Menu {
 }
 
 model MenuRecipe {
-  id         Int          @id @default(autoincrement())
-  menuId     Int?         @map("menu_id")
-  menu       Menu?        @relation(fields: [menuId], references: [id])
-  prepItemId Int?         @map("prep_item_id")
-  prepItem   PrepItem?    @relation(fields: [prepItemId], references: [id])
-  materialId Int?         @map("material_id")
-  material   RawMaterial? @relation(fields: [materialId], references: [id])
-  qtyPerUnit Decimal      @map("qty_per_unit") @db.Decimal(10, 3)
+  menuId     Int     @map("menu_id")
+  materialId Int?    @map("material_id")
+  qtyPerUnit Decimal @map("qty_per_unit") @db.Decimal(10, 3)
+  id         Int     @id @default(autoincrement())
+  prepItemId Int?    @map("prep_item_id")
+
+  // relations (restored)
+  menu     Menu         @relation(fields: [menuId], references: [id])
+  prepItem PrepItem?    @relation(fields: [prepItemId], references: [id])
+  material RawMaterial? @relation(fields: [materialId], references: [id])
 
   @@map("menu_recipe")
 }
 
 model ReadyProductionLog {
-  id          Int        @id @default(autoincrement())
-  branchId    Int?       @map("branch_id")
-  branch      Branch?    @relation(fields: [branchId], references: [id])
-  menuId      Int?       @map("menu_id")
-  menu        Menu?      @relation(fields: [menuId], references: [id])
-  prepBatchId Int?       @map("prep_batch_id")
-  prepBatch   PrepBatch? @relation(fields: [prepBatchId], references: [id])
-  qtyProduced Int        @map("qty_produced")
-  staffId     Int?       @map("staff_id")
-  staff       Staff?     @relation(fields: [staffId], references: [id])
-  producedAt  DateTime   @default(now()) @map("produced_at")
-  localId     String?    @map("local_id") @db.Uuid
-  synced      Boolean    @default(true)
+  id          Int       @id @default(autoincrement())
+  branchId    Int?      @map("branch_id")
+  menuId      Int?      @map("menu_id")
+  prepBatchId Int?      @map("prep_batch_id")
+  qtyProduced Int       @map("qty_produced")
+  staffId     Int?      @map("staff_id")
+  producedAt  DateTime? @default(now()) @map("produced_at") @db.Timestamp(6)
+  localId     String?   @map("local_id") @db.Uuid
+  synced      Boolean?  @default(true)
+
+  // relations (restored)
+  branch    Branch?    @relation(fields: [branchId], references: [id])
+  menu      Menu?      @relation(fields: [menuId], references: [id])
+  prepBatch PrepBatch? @relation(fields: [prepBatchId], references: [id])
+  staff     Staff?     @relation(fields: [staffId], references: [id])
 
   @@map("ready_production_logs")
 }
 
 model BranchStock {
-  id           Int     @id @default(autoincrement())
-  branchId     Int?    @map("branch_id")
-  branch       Branch? @relation(fields: [branchId], references: [id])
-  menuId       Int?    @map("menu_id")
-  menu         Menu?   @relation(fields: [menuId], references: [id])
-  qty          Int     @default(0)
-  reorderPoint Int?    @default(0) @map("reorder_point")
+  id           Int @id @default(autoincrement())
+  branchId     Int @map("branch_id")
+  menuId       Int @map("menu_id")
+  qty          Int @default(0)
+  reorderPoint Int @default(5) @map("reorder_point")
+
+  // relations (restored)
+  branch Branch @relation(fields: [branchId], references: [id])
+  menu   Menu   @relation(fields: [menuId], references: [id])
 
   @@unique([branchId, menuId])
+  @@unique([branchId, menuId], map: "uq_branch_stock")
   @@map("branch_stock")
 }
 
 model StockLog {
   id        Int      @id @default(autoincrement())
-  branchId  Int?     @map("branch_id")
-  branch    Branch?  @relation(fields: [branchId], references: [id])
-  menuId    Int?     @map("menu_id")
-  menu      Menu?    @relation(fields: [menuId], references: [id])
+  branchId  Int      @map("branch_id")
+  menuId    Int      @map("menu_id")
   type      String   @db.VarChar(10)
   qty       Int
   note      String?  @db.VarChar(255)
   staffId   Int?     @map("staff_id")
-  staff     Staff?   @relation(fields: [staffId], references: [id])
   orderId   Int?     @map("order_id")
-  order     Order?   @relation(fields: [orderId], references: [id])
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   localId   String?  @map("local_id") @db.Uuid
-  synced    Boolean  @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
+  synced    Boolean? @default(true)
 
+  // relations (restored)
+  branch Branch @relation(fields: [branchId], references: [id])
+  menu   Menu   @relation(fields: [menuId], references: [id])
+  staff  Staff? @relation(fields: [staffId], references: [id])
+  order  Order? @relation(fields: [orderId], references: [id])
+
+  @@index([branchId, menuId, createdAt], map: "idx_stock_logs_branch_menu")
   @@map("stock_logs")
 }
 
@@ -272,12 +366,13 @@ model Promotion {
   buyQty         Int?      @map("buy_qty")
   getQty         Int?      @map("get_qty")
   branchId       Int?      @map("branch_id")
-  branch         Branch?   @relation(fields: [branchId], references: [id])
   minOrderAmount Decimal?  @default(0) @map("min_order_amount") @db.Decimal(10, 2)
   startDate      DateTime? @map("start_date") @db.Date
   endDate        DateTime? @map("end_date") @db.Date
-  active         Boolean   @default(true)
+  active         Boolean?  @default(true)
 
+  // relations (restored)
+  branch         Branch?         @relation(fields: [branchId], references: [id])
   promotionMenus PromotionMenu[]
   orders         Order[]
 
@@ -285,118 +380,156 @@ model Promotion {
 }
 
 model PromotionMenu {
-  promotionId Int       @map("promotion_id")
-  promotion   Promotion @relation(fields: [promotionId], references: [id])
-  menuId      Int       @map("menu_id")
-  menu        Menu      @relation(fields: [menuId], references: [id])
+  promotionId Int @map("promotion_id")
+  menuId      Int @map("menu_id")
+
+  // relations (restored)
+  promotion Promotion @relation(fields: [promotionId], references: [id])
+  menu      Menu      @relation(fields: [menuId], references: [id])
 
   @@id([promotionId, menuId])
   @@map("promotion_menus")
 }
 
 model Order {
-  id             Int        @id @default(autoincrement())
-  branchId       Int?       @map("branch_id")
-  branch         Branch?    @relation(fields: [branchId], references: [id])
-  staffId        Int?       @map("staff_id")
-  staff          Staff?     @relation(fields: [staffId], references: [id])
-  receiptNo      String?    @map("receipt_no") @db.VarChar(30)
-  subtotalAmount Decimal    @map("subtotal_amount") @db.Decimal(10, 2)
-  promotionId    Int?       @map("promotion_id")
-  promotion      Promotion? @relation(fields: [promotionId], references: [id])
-  discountAmount Decimal    @default(0) @map("discount_amount") @db.Decimal(10, 2)
-  totalAmount    Decimal    @map("total_amount") @db.Decimal(10, 2)
-  status         String?    @db.VarChar(20)
-  cancelReason   String?    @map("cancel_reason") @db.VarChar(255)
-  localId        String?    @map("local_id") @db.Uuid
-  deviceId       String?    @map("device_id") @db.VarChar(50)
-  orderChannel   String?    @default("store") @map("order_channel") @db.VarChar(20)
-  // ลูกค้าสั่งเอง / มาจากการจอง
-  customerName      String? @map("customer_name") @db.VarChar(100)
-  customerPhone     String? @map("customer_phone") @db.VarChar(20)
-  receiptToken      String? @unique @map("receipt_token") @db.VarChar(64)
-  fulfillmentStatus String? @map("fulfillment_status") @db.VarChar(20)
-  deliveryMethod    String?  @map("delivery_method") @db.VarChar(20)
-  deliveryAddress   String?  @map("delivery_address") @db.VarChar(500)
-  deliveryLat       Float?   @map("delivery_lat")
-  deliveryLng       Float?   @map("delivery_lng")
-  deliveryFee       Decimal  @default(0) @map("delivery_fee") @db.Decimal(10, 2)
-  synced         Boolean    @default(true)
-  createdAt      DateTime   @default(now()) @map("created_at")
+  id                Int          @id @default(autoincrement())
+  branchId          Int          @map("branch_id")
+  staffId           Int?         @map("staff_id")
+  channel           String?      @db.VarChar(20)
+  status            String       @default("completed") @db.VarChar(20)
+  cancelReason      String?      @map("cancel_reason") @db.VarChar(255)
+  cancelled_by      Int?
+  cancelled_at      DateTime?    @db.Timestamp(6)
+  totalAmount       Decimal      @map("total_amount") @db.Decimal(10, 2)
+  cash_received     Decimal?     @db.Decimal(10, 2)
+  change_given      Decimal?     @db.Decimal(10, 2)
+  synced            Boolean      @default(true)
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+  receiptNo         String?      @map("receipt_no") @db.VarChar(30)
+  subtotalAmount    Decimal      @default(0) @map("subtotal_amount") @db.Decimal(10, 2)
+  promotionId       Int?         @map("promotion_id")
+  discountAmount    Decimal?     @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  localId           String?      @map("local_id") @db.Uuid
+  deviceId          String?      @map("device_id") @db.VarChar(50)
+  orderChannel      String?      @default("store") @map("order_channel") @db.VarChar(20)
+  customerName      String?      @map("customer_name") @db.VarChar(100)
+  customerPhone     String?      @map("customer_phone") @db.VarChar(20)
+  receiptToken      String?      @unique @map("receipt_token") @db.VarChar(64)
+  fulfillmentStatus String?      @map("fulfillment_status") @db.VarChar(20)
+  deliveryMethod    String?      @map("delivery_method") @db.VarChar(20)
+  deliveryAddress   String?      @map("delivery_address") @db.VarChar(500)
+  deliveryLat       Float?       @map("delivery_lat")
+  deliveryLng       Float?       @map("delivery_lng")
+  deliveryFee       Decimal      @default(0) @map("delivery_fee") @db.Decimal(10, 2)
+  slipUrl           String?      @map("slip_url") @db.VarChar(255)
+  slipUploadedAt    DateTime?    @map("slip_uploaded_at") @db.Timestamp(6)
+  pickupAt          DateTime?    @map("pickup_at") @db.Timestamp(6)
+  slipHash          String?      @map("slip_hash") @db.VarChar(64)
+  slipAi            Json?        @map("slip_ai")
+  slipAiAt          DateTime?    @map("slip_ai_at") @db.Timestamp(6)
+  review            OrderReview?
 
+  // relations (restored)
+  branch       Branch        @relation(fields: [branchId], references: [id])
+  staff        Staff?        @relation(fields: [staffId], references: [id])
+  promotion    Promotion?    @relation(fields: [promotionId], references: [id])
   items        OrderItem[]
   payments     Payment[]
   stockLogs    StockLog[]
   reservations Reservation[]
 
+  @@index([branchId, createdAt], map: "idx_orders_branch_date")
+  @@index([channel], map: "idx_orders_channel")
+  @@index([branchId, orderChannel, fulfillmentStatus], map: "orders_channel_fulfillment_idx")
+  @@index([deliveryMethod, createdAt])
   @@map("orders")
 }
 
 model Payment {
-  id      Int      @id @default(autoincrement())
-  orderId Int?     @map("order_id")
-  order   Order?   @relation(fields: [orderId], references: [id])
-  method  String?  @db.VarChar(20)
-  amount  Decimal  @db.Decimal(10, 2)
-  refNo   String?  @map("ref_no") @db.VarChar(100)
-  paidAt  DateTime @default(now()) @map("paid_at")
+  id      Int       @id @default(autoincrement())
+  orderId Int?      @map("order_id")
+  method  String?   @db.VarChar(20)
+  amount  Decimal   @db.Decimal(10, 2)
+  refNo   String?   @map("ref_no") @db.VarChar(100)
+  paidAt  DateTime? @default(now()) @map("paid_at") @db.Timestamp(6)
+
+  // relations (restored)
+  order Order? @relation(fields: [orderId], references: [id])
 
   @@map("payments")
 }
 
 model OrderItem {
-  id             Int     @id @default(autoincrement())
-  orderId        Int?    @map("order_id")
-  order          Order?  @relation(fields: [orderId], references: [id])
-  menuId         Int?    @map("menu_id")
-  menu           Menu?   @relation(fields: [menuId], references: [id])
-  size           String? @db.VarChar(10)
+  id             Int      @id @default(autoincrement())
+  orderId        Int      @map("order_id")
+  menuId         Int      @map("menu_id")
+  size           String   @default("full") @db.VarChar(10)
   qty            Int
-  unitPrice      Decimal @map("unit_price") @db.Decimal(10, 2)
-  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(10, 2)
-  lineTotal      Decimal @map("line_total") @db.Decimal(10, 2)
+  unitPrice      Decimal  @map("unit_price") @db.Decimal(10, 2)
+  lineTotal      Decimal  @map("line_total") @db.Decimal(10, 2)
+  discountAmount Decimal? @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  note           String?  @db.VarChar(200)
+
+  // relations (restored)
+  order Order @relation(fields: [orderId], references: [id])
+  menu  Menu  @relation(fields: [menuId], references: [id])
 
   @@map("order_items")
 }
 
 model Reservation {
-  id              Int       @id @default(autoincrement())
-  branchId        Int?      @map("branch_id")
-  branch          Branch?   @relation(fields: [branchId], references: [id])
-  customerName    String?   @map("customer_name") @db.VarChar(100)
-  phone           String?   @db.VarChar(20)
-  pickupDatetime  DateTime  @map("pickup_datetime")
-  depositAmount   Decimal   @default(0) @map("deposit_amount") @db.Decimal(10, 2)
-  status          String    @default("pending") @db.VarChar(20)
-  note            String?   @db.VarChar(255)
-  createdById     Int?      @map("created_by")
-  createdBy       Staff?    @relation(fields: [createdById], references: [id])
-  orderId         Int?      @map("order_id")
-  order           Order?    @relation(fields: [orderId], references: [id])
-  localId         String?   @map("local_id") @db.Uuid
-  synced          Boolean   @default(true)
-  createdAt       DateTime  @default(now()) @map("created_at")
-  totalAmount     Decimal   @default(0) @map("total_amount") @db.Decimal(10, 2)
-  receiptToken    String?   @unique @map("receipt_token") @db.VarChar(64)
-  cancelReason    String?   @map("cancel_reason") @db.VarChar(255)
-  completedAt     DateTime? @map("completed_at")
+  id             Int                  @id @default(autoincrement())
+  branchId       Int?                 @map("branch_id")
+  customerName   String?              @map("customer_name") @db.VarChar(100)
+  phone          String?              @db.VarChar(20)
+  pickupDatetime DateTime             @map("pickup_datetime") @db.Timestamp(6)
+  depositAmount  Decimal?             @default(0) @map("deposit_amount") @db.Decimal(10, 2)
+  status         String?              @default("pending") @db.VarChar(20)
+  note           String?              @db.VarChar(255)
+  createdById    Int?                 @map("created_by")
+  orderId        Int?                 @map("order_id")
+  localId        String?              @map("local_id") @db.Uuid
+  synced         Boolean?             @default(true)
+  createdAt      DateTime?            @default(now()) @map("created_at") @db.Timestamp(6)
+  totalAmount    Decimal              @default(0) @map("total_amount") @db.Decimal(10, 2)
+  receiptToken   String?              @unique @map("receipt_token") @db.VarChar(64)
+  cancelReason   String?              @map("cancel_reason") @db.VarChar(255)
+  completedAt    DateTime?            @map("completed_at") @db.Timestamp(6)
+  slipUrl        String?              @map("slip_url") @db.VarChar(255)
+  slipUploadedAt DateTime?            @map("slip_uploaded_at") @db.Timestamp(6)
+  slipHash       String?              @map("slip_hash") @db.VarChar(64)
+  slipAi         Json?                @map("slip_ai")
+  slipAiAt       DateTime?            @map("slip_ai_at") @db.Timestamp(6)
+  deliveryMethod  String              @default("pickup") @map("delivery_method") @db.VarChar(20)
+  deliveryAddress String?             @map("delivery_address") @db.VarChar(500)
+  deliveryLat     Float?              @map("delivery_lat")
+  deliveryLng     Float?              @map("delivery_lng")
+  deliveryFee     Decimal             @default(0) @map("delivery_fee") @db.Decimal(10, 2)
+  payments       ReservationPayment[]
 
-  items    ReservationItem[]
-  payments ReservationPayment[]
+  // relations (restored)
+  branch    Branch?           @relation(fields: [branchId], references: [id])
+  createdBy Staff?            @relation(fields: [createdById], references: [id])
+  order     Order?            @relation(fields: [orderId], references: [id])
+  items     ReservationItem[]
 
+  @@index([branchId, status, pickupDatetime], map: "reservations_branch_status_pickup_idx")
   @@map("reservations")
 }
 
 model ReservationItem {
-  id            Int          @id @default(autoincrement())
-  reservationId Int?         @map("reservation_id")
-  reservation   Reservation? @relation(fields: [reservationId], references: [id])
-  menuId        Int?         @map("menu_id")
-  menu          Menu?        @relation(fields: [menuId], references: [id])
-  size          String?      @db.VarChar(10)
+  id            Int      @id @default(autoincrement())
+  reservationId Int?     @map("reservation_id")
+  menuId        Int?     @map("menu_id")
+  size          String?  @db.VarChar(10)
   qty           Int
-  unitPrice     Decimal?     @map("unit_price") @db.Decimal(10, 2)
-  lineTotal     Decimal?     @map("line_total") @db.Decimal(10, 2)
+  unitPrice     Decimal? @map("unit_price") @db.Decimal(10, 2)
+  lineTotal     Decimal? @map("line_total") @db.Decimal(10, 2)
+  note          String?  @db.VarChar(200)
+
+  // relations (restored)
+  reservation Reservation? @relation(fields: [reservationId], references: [id])
+  menu        Menu?        @relation(fields: [menuId], references: [id])
 
   @@map("reservation_items")
 }
@@ -404,59 +537,78 @@ model ReservationItem {
 model ReservationPayment {
   id            Int         @id @default(autoincrement())
   reservationId Int         @map("reservation_id")
-  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
-  kind          String      @db.VarChar(10) // deposit | balance | refund
+  kind          String      @db.VarChar(10)
   method        String?     @db.VarChar(20)
   amount        Decimal     @db.Decimal(10, 2)
   refNo         String?     @map("ref_no") @db.VarChar(100)
-  paidAt        DateTime    @default(now()) @map("paid_at")
+  paidAt        DateTime    @default(now()) @map("paid_at") @db.Timestamp(6)
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
+  @@index([reservationId], map: "reservation_payments_res_idx")
   @@map("reservation_payments")
 }
 
 model OtherExpense {
-  id             Int       @id @default(autoincrement())
-  branchId       Int?      @map("branch_id")
-  branch         Branch?   @relation(fields: [branchId], references: [id])
-  label          String    @db.VarChar(100)
-  amount         Decimal   @db.Decimal(10, 2)
-  // รายจ่ายรายวันที่พนักงานบันทึก (ข้อมูลเดิมที่ไม่มีวันที่ = null)
-  expenseDate    DateTime? @map("expense_date") @db.Date
-  staffId        Int?      @map("staff_id")
-  paidFromDrawer Boolean   @default(true) @map("paid_from_drawer")
-  createdAt      DateTime  @default(now()) @map("created_at")
+  id              Int       @id @default(autoincrement())
+  branchId        Int?      @map("branch_id")
+  label           String    @db.VarChar(100)
+  amount          Decimal   @db.Decimal(10, 2)
+  effective_month DateTime  @default(dbgenerated("date_trunc('month'::text, now())")) @db.Date
+  expenseDate     DateTime? @map("expense_date") @db.Date
+  staffId         Int?      @map("staff_id")
+  paidFromDrawer  Boolean   @default(true) @map("paid_from_drawer")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+
+  // relations (restored)
+  branch Branch? @relation(fields: [branchId], references: [id])
 
   @@map("other_expenses")
 }
 
 model Notification {
   id           Int      @id @default(autoincrement())
-  branchId     Int?     @map("branch_id")
-  branch       Branch?  @relation(fields: [branchId], references: [id])
-  menuId       Int?     @map("menu_id")
-  menu         Menu?    @relation(fields: [menuId], references: [id])
-  qtyAtTrigger Int?     @map("qty_at_trigger")
+  branchId     Int      @map("branch_id")
+  menuId       Int      @map("menu_id")
+  qtyAtTrigger Int      @map("qty_at_trigger")
   isRead       Boolean  @default(false) @map("is_read")
   resolved     Boolean  @default(false)
-  createdAt    DateTime @default(now()) @map("created_at")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  // relations (restored)
+  branch Branch @relation(fields: [branchId], references: [id])
+  menu   Menu   @relation(fields: [menuId], references: [id])
 
   @@map("notifications")
 }
 
-// เปิด-ปิดกะการขาย (นับเงินในลิ้นชัก)
 model Shift {
   id           Int       @id @default(autoincrement())
   branchId     Int       @map("branch_id")
-  branch       Branch    @relation(fields: [branchId], references: [id])
   staffId      Int?      @map("staff_id")
-  staff        Staff?    @relation(fields: [staffId], references: [id])
-  openedAt     DateTime  @default(now()) @map("opened_at")
+  openedAt     DateTime  @default(now()) @map("opened_at") @db.Timestamp(6)
   openingCash  Decimal   @default(0) @map("opening_cash") @db.Decimal(10, 2)
-  closedAt     DateTime? @map("closed_at")
+  closedAt     DateTime? @map("closed_at") @db.Timestamp(6)
   countedCash  Decimal?  @map("counted_cash") @db.Decimal(10, 2)
   expectedCash Decimal?  @map("expected_cash") @db.Decimal(10, 2)
   difference   Decimal?  @db.Decimal(10, 2)
   note         String?   @db.VarChar(255)
+  branch       Branch    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  staff        Staff?    @relation(fields: [staffId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  @@index([branchId, closedAt], map: "shifts_branch_open_idx")
   @@map("shifts")
+}
+
+model OrderReview {
+  id           Int      @id @default(autoincrement())
+  orderId      Int      @unique @map("order_id")
+  branchId     Int?     @map("branch_id")
+  rating       Int
+  comment      String?  @db.VarChar(500)
+  customerName String?  @map("customer_name") @db.VarChar(100)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([branchId, createdAt(sort: Desc)], map: "order_reviews_branch_idx")
+  @@map("order_reviews")
 }

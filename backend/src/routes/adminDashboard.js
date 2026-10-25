@@ -91,6 +91,17 @@ async function menuCostPerUnit(menuId, cache) {
     return cache.get(menuId)
   }
 
+  // ต้นทุนที่แอดมินกำหนดไว้ที่หน้าแก้ไขสินค้า > จัดการต้นทุน (ถ้ามี) ใช้ก่อนสูตรวัตถุดิบ
+  const menuRow = await prisma.menu.findUnique({
+    where: { id: menuId },
+    select: { cost: true },
+  })
+  if (menuRow && Number(menuRow.cost) > 0) {
+    const fixed = Number(menuRow.cost)
+    cache.set(menuId, fixed)
+    return fixed
+  }
+
   const recipe = await prisma.menuRecipe.findMany({
     where: {
       menuId,

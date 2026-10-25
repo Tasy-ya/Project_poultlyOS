@@ -10,6 +10,7 @@ import {
   api,
   baht,
 } from '../api'
+import AdminBottomNav from '../components/AdminBottomNav'
 
 
 // =====================================================
@@ -1598,7 +1599,7 @@ export default function AdminProductsPage() {
             />
 
             <label style={labelStyle}>
-              ต้นทุน
+              ต้นทุนต่อ 1 ตัว (เต็มตัว) บาท — ครึ่งตัวระบบคิดครึ่งหนึ่งให้อัตโนมัติ
             </label>
 
             <input
@@ -1981,57 +1982,8 @@ export default function AdminProductsPage() {
       )}
 
 
-      {/* =====================================================
-          ADMIN BOTTOM NAVIGATION
-      ===================================================== */}
-
-      <nav
-        style={{
-          position: 'fixed', left: 0, right: 0, bottom: 0,
-          height: 74, background: '#ff1111', display: 'flex',
-          justifyContent: 'center', zIndex: 3000,
-          boxShadow: '0 -2px 10px rgba(0,0,0,0.12)',
-        }}
-      >
-        <div
-          style={{ width: '100%', maxWidth: 2000, display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)', alignItems: 'stretch' }}
-        >
-          <Link to="/admin" style={{ ...navLinkStyle, transition: 'background 0.2s' }}>
-            <HomeIcon size={26} />
-            <span>หน้าหลัก</span>
-          </Link>
-
-          <Link to="/admin/sales" style={navLinkStyle}>
-            <ReceiptIcon size={27} />
-            <span>ประวัติการขาย</span>
-          </Link>
-
-          <Link
-            to="/admin/products"
-            style={{
-              ...navLinkStyle,
-              fontWeight: 700,
-              background: 'rgba(255,255,255,0.20)',
-              borderRadius: '12px 12px 0 0',
-              marginTop: 4,
-            }}
-          >
-            <ShoppingBagIcon size={26} />
-            <span>แก้ไขสินค้า</span>
-          </Link>
-
-          <Link to="/admin/promotions" style={navLinkStyle}>
-            <GiftIcon size={26} />
-            <span>โปรโมชั่น</span>
-          </Link>
-
-          <Link to="/admin/branches" style={navLinkStyle}>
-            <BuildingIcon size={26} />
-            <span>จัดการสาขา</span>
-          </Link>
-        </div>
-      </nav>
+      {/* แถบเมนูล่างของ Admin (ใช้ร่วมกันทุกหน้า) */}
+      <AdminBottomNav />
     </div>
   )
 

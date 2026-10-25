@@ -36,6 +36,8 @@ import AdminSalesPage from './pages/AdminSalesPage'
 import AdminProductsPage from './pages/AdminProductsPage'
 import AdminPromotionsPage from './pages/AdminPromotionsPage'
 import AdminBranchesPage from './pages/Adminbranchespage'
+import AdminClosuresPage from './pages/AdminClosuresPage'
+import AdminStockHistoryPage from './pages/AdminStockHistoryPage'
 
 
 // =====================================================
@@ -457,6 +459,26 @@ function App() {
 
 
       {/* -------------------------------------------------
+          Admin - ประวัติสต็อก
+
+          - ปฏิทินรับเข้า/นำออกรายวัน
+          - ดูแต่ละล็อต ราคา จำนวนรับเข้า วันเวลารับเข้า-นำออก
+
+          URL:
+          /admin/stock-history
+      ------------------------------------------------- */}
+
+      <Route
+        path="/admin/stock-history"
+        element={
+          <AdminGuard>
+            <AdminStockHistoryPage />
+          </AdminGuard>
+        }
+      />
+
+
+      {/* -------------------------------------------------
           Admin - จัดการสาขา
 
           - เพิ่ม / แก้ไข / ลบสาขา
@@ -471,6 +493,26 @@ function App() {
         element={
           <AdminGuard>
             <AdminBranchesPage />
+          </AdminGuard>
+        }
+      />
+
+
+      {/* -------------------------------------------------
+          Admin - วันหยุดร้าน
+
+          - หยุดเป็นช่วงวัน / หยุดประจำทุกสัปดาห์ (ทุกสาขา หรือเฉพาะสาขา)
+          - ลูกค้าเห็นวันหยุด สั่งซื้อเลยไม่ได้ จองวันหยุดไม่ได้
+
+          URL:
+          /admin/closures
+      ------------------------------------------------- */}
+
+      <Route
+        path="/admin/closures"
+        element={
+          <AdminGuard>
+            <AdminClosuresPage />
           </AdminGuard>
         }
       />

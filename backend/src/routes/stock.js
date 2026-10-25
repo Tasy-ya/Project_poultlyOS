@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requireDept } = require('../middleware/auth');
+const { receiveLot, consumeFEFO, STORAGES } = require('../lib/rawLots');
 
 // ทุกเส้นทางใน /api/stock สำหรับฝ่ายสต็อก (และ Admin) เท่านั้น
 const stockOnly = [requireAuth, requireDept('stock')];
@@ -30,31 +31,80 @@ router.get('/raw/:branchId', stockOnly, async (req, res) => {
   res.json(stock);
 });
 
-// POST /api/stock/raw/receive  body: { branchId, materialId, qty, note }
-// รับวัตถุดิบสดเข้าสต็อก
+// POST /api/stock/raw/receive
+// body: { branchId, materialId, qty, note, cost, lotNo?, receivedAt?, expiresAt?, supplier?, storage? }
+//   receivedAt = วันที่รับสินค้าเข้า (ว่าง = เวลานี้) -> ใช้เรียงลำดับเบิกแบบ FIFO
+// รับวัตถุดิบสดเข้าสต็อก -> สร้าง "ล็อตใหม่" เสมอ (ไม่เขียนทับล็อตเดิม)
+//   lotNo ว่าง = ระบบสร้างเลขล็อตให้
+//   storage = ambient | chilled | frozen (ว่าง = ใช้ค่าตั้งต้นของวัตถุดิบ)
+//   expiresAt ว่าง = ระบบคำนวณจาก "อายุเก็บมาตรฐาน" ของวัตถุดิบตามสถานะนั้น
+//                    ถ้ายังไม่ได้ตั้งอายุมาตรฐาน = ไม่มีวันหมดอายุ (เบิกท้ายสุด)
 router.post('/raw/receive', stockOnly, async (req, res) => {
-  const { branchId, materialId, qty, note, cost } = req.body;
-  if (!branchId || !materialId || !qty) {
+  const { note, cost, lotNo, expiresAt, supplier, receivedAt } = req.body;
+  const branchId = Number(req.body.branchId);
+  const materialId = Number(req.body.materialId);
+  const qty = Number(req.body.qty);
+
+  if (!branchId || !materialId || !(qty > 0)) {
     return res.status(400).json({ error: 'ต้องระบุ branchId, materialId, qty' });
   }
 
-  const result = await prisma.$transaction(async (tx) => {
-    if (cost) await tx.rawMaterial.update({ where: { id: materialId }, data: { costPerUnit: cost } });
-    const stock = await tx.branchStockRaw.upsert({
-      where: { branchId_materialId: { branchId, materialId } },
-      update: { qty: { increment: qty } },
-      create: { branchId, materialId, qty },
-    });
-    await tx.rawMaterialLog.create({
-      data: { branchId, materialId, type: 'in', qty, note, staffId: req.staff.id },
-    });
-    return stock;
-  });
+  if (req.body.storage && !STORAGES.slice(0, 3).includes(req.body.storage)) {
+    return res.status(400).json({ error: 'สถานะการเก็บต้องเป็น อุณหภูมิห้อง / แช่เย็น / แช่แข็ง' });
+  }
 
-  res.status(201).json(result);
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const material = await tx.rawMaterial.findUnique({ where: { id: materialId } });
+      if (!material) throw new Error('ไม่พบวัตถุดิบนี้');
+
+      if (cost) await tx.rawMaterial.update({ where: { id: materialId }, data: { costPerUnit: cost } });
+
+      const lot = await receiveLot(tx, {
+        branchId,
+        materialId,
+        qty,
+        lotNo,
+        expiresAt,
+        receivedAt,
+        supplier,
+        unitCost: cost,
+        note,
+        staffId: req.staff.id,
+        material,
+        storage: req.body.storage || material.defaultStorage || 'ambient',
+      });
+
+      const stock = await tx.branchStockRaw.findUnique({
+        where: { branchId_materialId: { branchId, materialId } },
+      });
+
+      return { ...stock, lot };
+    });
+
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ---------- ขั้นที่ 2: หมัก (prep) ----------
+
+// GET /api/stock/prep-recipes - สูตรหมักทั้งหมด (วัตถุดิบที่ต้องใช้ต่อ 1 หน่วย) ไว้โชว์ว่าหมักได้อีกกี่ตัว
+router.get('/prep-recipes', stockOnly, async (req, res) => {
+  const [rows, materials] = await Promise.all([
+    prisma.prepRecipe.findMany(),
+    prisma.rawMaterial.findMany({ select: { id: true, name: true, unit: true } }),
+  ]);
+  const byId = new Map(materials.map(m => [m.id, m]));
+
+  res.json(rows.map(r => ({
+    prepItemId: r.prepItemId,
+    materialId: r.materialId,
+    qtyPerUnit: Number(r.qtyPerUnit),
+    material: byId.get(r.materialId) || null,
+  })));
+});
 
 // GET /api/stock/prep/:branchId - ล็อตของหมักที่ยังใช้ได้ (active)
 router.get('/prep/:branchId', stockOnly, async (req, res) => {
@@ -63,9 +113,40 @@ router.get('/prep/:branchId', stockOnly, async (req, res) => {
   const batches = await prisma.prepBatch.findMany({
     where: { branchId, status: 'active', ...(category ? { prepItem: { category } } : {}) },
     include: { prepItem: true },
-    orderBy: { expiresAt: 'asc' }, // FEFO - ใกล้หมดอายุก่อน
+    orderBy: [{ preparedAt: 'asc' }, { id: 'asc' }], // FIFO - หมักก่อนใช้ก่อน
   });
   res.json(batches);
+});
+
+// POST /api/stock/prep/:id/discard  body: { qty? }  (ว่าง = ทิ้งทั้งชุดที่เหลือ)
+// ทิ้งของหมักที่เสีย/หมดอายุ: ลดยอดคงเหลือของชุด ถ้าหมดจะปิดชุดเป็น 'wasted'
+router.post('/prep/:id/discard', stockOnly, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'รหัสชุดหมักไม่ถูกต้อง' });
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const batch = await tx.prepBatch.findUnique({ where: { id }, include: { prepItem: true } });
+      if (!batch || batch.status !== 'active') throw new Error('ไม่พบชุดหมักนี้ หรือถูกใช้/ทิ้งไปแล้ว');
+
+      const remain = Number(batch.qtyRemaining);
+      const qty = req.body.qty == null || req.body.qty === '' ? remain : Number(req.body.qty);
+      if (!(qty > 0)) throw new Error('จำนวนที่ทิ้งต้องมากกว่า 0');
+      if (qty > remain + 0.0005) throw new Error(`ชุดนี้เหลือ ${remain} ทิ้งเกินไม่ได้`);
+
+      const left = Math.max(0, Math.round((remain - qty) * 1000) / 1000);
+      await tx.prepBatch.update({
+        where: { id },
+        data: { qtyRemaining: left, status: left <= 0 ? 'wasted' : 'active' },
+      });
+
+      return { name: batch.prepItem?.name, batchNo: batch.batchNo || batch.id, wasted: qty, remaining: left };
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // POST /api/stock/prep/start  body: { branchId, prepItemId, qtyProduced, batchNo }
@@ -86,25 +167,18 @@ router.post('/prep/start', stockOnly, async (req, res) => {
       // ตัดวัตถุดิบดิบตามสูตร
       for (const r of recipe) {
         const needed = Number(r.qtyPerUnit) * qtyProduced;
-        const rawStock = await tx.branchStockRaw.findUnique({
-          where: { branchId_materialId: { branchId, materialId: r.materialId } },
-        });
-        if (!rawStock || Number(rawStock.qty) < needed) {
-          throw new Error(`วัตถุดิบดิบไม่พอสำหรับหมัก "${prepItem.name}"`);
-        }
-        await tx.branchStockRaw.update({
-          where: { branchId_materialId: { branchId, materialId: r.materialId } },
-          data: { qty: { decrement: needed } },
-        });
-        await tx.rawMaterialLog.create({
-          data: {
-            branchId,
-            materialId: r.materialId,
-            type: 'out',
-            qty: needed,
-            note: `ใช้หมัก "${prepItem.name}"`,
-            staffId: req.staff.id,
-          },
+        const material = await tx.rawMaterial.findUnique({ where: { id: r.materialId } });
+
+        // เบิกวัตถุดิบดิบแบบ FEFO/FIFO (ล็อตที่หมดอายุก่อน / รับเข้าก่อน ใช้ก่อน)
+        await consumeFEFO(tx, {
+          branchId,
+          materialId: r.materialId,
+          qty: needed,
+          type: 'out',
+          note: `ใช้หมัก "${prepItem.name}"`,
+          staffId: req.staff.id,
+          materialName: material?.name,
+          forWhat: `หมัก "${prepItem.name}"`,
         });
       }
 
@@ -137,29 +211,121 @@ router.post('/prep/start', stockOnly, async (req, res) => {
 // ---------- ขั้นที่ 3: พร้อมขาย (จุดแปลงเป็นหน่วยครึ่งตัว) ----------
 
 // POST /api/stock/ready/produce  body: { branchId, menuId, prepBatchId?, qtyWholeUnits }
-// นำของหมัก (หรือวัตถุดิบดิบ ถ้าเมนูไม่ผ่านขั้นหมัก) มาทำเป็นพร้อมขาย
+// ทำเสร็จ -> พร้อมขาย: "ต้องมีของให้ตัดก่อนเสมอ" ไม่ใช่เพิ่มตัวเลขลอย ๆ
+//   - เมนูที่สูตรใช้ "ของหมัก" (menu_recipe.prep_item_id): ตัดจากชุดหมักของสาขานี้
+//       * ระบุ prepBatchId = ตัดจากชุดนั้น (ต้องตรงกับเมนู ยังไม่หมดอายุ และเหลือพอ)
+//       * ไม่ระบุ = ตัดจากชุดที่หมักก่อนอัตโนมัติ (FIFO) ถ้ารวมกันยังไม่พอ = ปฏิเสธ ต้องหมักก่อน
+//   - เมนูที่สูตรใช้ "วัตถุดิบดิบ" (menu_recipe.material_id): เบิกแบบ FEFO/FIFO ถ้าไม่พอ = ปฏิเสธ
+//   - เมนูที่ไม่มีสูตรเลย: ไม่มีอะไรให้ตัด (เพิ่มเข้าสต็อกได้ตามเดิม)
 // qtyWholeUnits = จำนวน "เต็มตัว" ที่ทำเสร็จ เช่น ทอดเป็ดเสร็จ 6 ตัว -> ระบบจะ x2 เป็น 12 หน่วยครึ่งตัวเข้าสต็อกขาย
 router.post('/ready/produce', stockOnly, async (req, res) => {
-  const { branchId, menuId, prepBatchId, qtyWholeUnits } = req.body;
-  if (!branchId || !menuId || !qtyWholeUnits) {
+  const branchId = Number(req.body.branchId);
+  const menuId = Number(req.body.menuId);
+  const qtyWholeUnits = Number(req.body.qtyWholeUnits);
+  const prepBatchId = req.body.prepBatchId ? Number(req.body.prepBatchId) : null;
+
+  if (!branchId || !menuId || !(qtyWholeUnits > 0)) {
     return res.status(400).json({ error: 'ต้องระบุ branchId, menuId, qtyWholeUnits' });
   }
+
+  if (!Number.isInteger(qtyWholeUnits)) {
+    return res.status(400).json({ error: 'จำนวนตัวเต็มต้องเป็นจำนวนเต็ม' });
+  }
+
+  const r3 = (n) => Math.round(n * 1000) / 1000;
 
   try {
     const result = await prisma.$transaction(async (tx) => {
       const menu = await tx.menu.findUnique({ where: { id: menuId } });
       if (!menu) throw new Error('ไม่พบเมนูนี้');
 
-      // ถ้าอ้างอิงล็อตของหมัก ให้ตัด qty_remaining ของล็อตนั้น
+      const recipe = await tx.menuRecipe.findMany({ where: { menuId } });
+      const prepLines = recipe.filter((r) => r.prepItemId);
+      const rawLines = recipe.filter((r) => !r.prepItemId && r.materialId);
+
+      const perUnit = (r) => (Number(r.qtyPerUnit) > 0 ? Number(r.qtyPerUnit) : 1);
+      const now = new Date();
+
+      // ชุดหมักที่เลือกมา ต้องเป็นของสาขานี้ และตรงกับของหมักที่เมนูนี้ใช้
       if (prepBatchId) {
-        const batch = await tx.prepBatch.findUnique({ where: { id: prepBatchId } });
-        if (!batch || Number(batch.qtyRemaining) < qtyWholeUnits) {
-          throw new Error('ของหมักในล็อตนี้เหลือไม่พอ');
+        const picked = await tx.prepBatch.findUnique({ where: { id: prepBatchId } });
+
+        if (!picked || picked.branchId !== branchId) {
+          throw new Error('ไม่พบชุดหมักนี้ในสาขาที่เลือก');
         }
-        const remaining = Number(batch.qtyRemaining) - qtyWholeUnits;
-        await tx.prepBatch.update({
-          where: { id: prepBatchId },
-          data: { qtyRemaining: remaining, status: remaining <= 0 ? 'used_up' : 'active' },
+
+        if (!prepLines.some((l) => l.prepItemId === picked.prepItemId)) {
+          throw new Error(`ชุดหมัก #${picked.id} ไม่ใช่ของหมักที่เมนู "${menu.name}" ใช้`);
+        }
+      }
+
+      // ---- ตัดของหมัก ----
+      for (const line of prepLines) {
+        const need = r3(perUnit(line) * qtyWholeUnits);
+        const prepItem = await tx.prepItem.findUnique({ where: { id: line.prepItemId } });
+        const label = prepItem ? `"${prepItem.name}"` : 'ของหมัก';
+
+        const batches = await tx.prepBatch.findMany({
+          where: { branchId, prepItemId: line.prepItemId, status: 'active', qtyRemaining: { gt: 0 } },
+          orderBy: [{ preparedAt: 'asc' }, { id: 'asc' }], // FIFO - หมักก่อนใช้ก่อน
+        });
+        const usable = batches.filter((b) => !b.expiresAt || b.expiresAt > now);
+
+        let pool = usable;
+
+        if (prepBatchId) {
+          const chosen = batches.find((b) => b.id === prepBatchId);
+          const pickedItem = (await tx.prepBatch.findUnique({ where: { id: prepBatchId } }))?.prepItemId;
+          const isThisLine = pickedItem === line.prepItemId;
+
+          if (isThisLine) {
+            if (!chosen) throw new Error('ไม่พบชุดหมักนี้ในสาขา หรือถูกใช้/ทิ้งไปแล้ว');
+            if (chosen.expiresAt && chosen.expiresAt <= now) throw new Error(`ชุดหมัก #${chosen.id} หมดอายุแล้ว ต้องบันทึกทิ้งก่อน`);
+            if (Number(chosen.qtyRemaining) + 0.0005 < need) {
+              throw new Error(`ชุดหมัก #${chosen.id} เหลือ ${Number(chosen.qtyRemaining)} ไม่พอสำหรับ ${need} ตัว`);
+            }
+            pool = [chosen];
+          }
+        }
+
+        const have = r3(pool.reduce((sum, b) => sum + Number(b.qtyRemaining), 0));
+
+        if (have + 0.0005 < need) {
+          throw new Error(
+            `ของหมัก ${label} ในสาขานี้ไม่พอ (มี ${have}, ต้องการ ${need}) — ต้องหมักก่อนจึงจะทำเสร็จเป็นพร้อมขายได้`
+          );
+        }
+
+        let left = need;
+
+        for (const b of pool) {
+          if (left <= 0) break;
+
+          const take = r3(Math.min(left, Number(b.qtyRemaining)));
+          const remaining = r3(Number(b.qtyRemaining) - take);
+
+          await tx.prepBatch.update({
+            where: { id: b.id },
+            data: { qtyRemaining: remaining, status: remaining <= 0 ? 'used_up' : 'active' },
+          });
+
+          left = r3(left - take);
+        }
+      }
+
+      // ---- เบิกวัตถุดิบดิบ (เมนูที่ไม่ผ่านขั้นหมัก) ----
+      for (const line of rawLines) {
+        const material = await tx.rawMaterial.findUnique({ where: { id: line.materialId } });
+
+        await consumeFEFO(tx, {
+          branchId,
+          materialId: line.materialId,
+          qty: r3(perUnit(line) * qtyWholeUnits),
+          type: 'out',
+          note: `ทำพร้อมขาย "${menu.name}" ${qtyWholeUnits} ตัว`,
+          staffId: req.staff.id,
+          materialName: material?.name,
+          forWhat: `ทำ "${menu.name}"`,
         });
       }
 
@@ -296,46 +462,40 @@ router.post('/transfer', stockOnly, async (req, res) => {
       const material = await tx.rawMaterial.findUnique({ where: { id: materialId } });
       if (!material) throw new Error('ไม่พบวัตถุดิบนี้');
 
-      const source = await tx.branchStockRaw.findUnique({
-        where: { branchId_materialId: { branchId: fromBranchId, materialId } },
+      // ตัดจากสาขาต้นทางแบบ FEFO/FIFO แล้วส่ง "ล็อตเดิม" ไปปลายทาง (คงเลขล็อต/วันหมดอายุ/วันรับเข้า)
+      const allocations = await consumeFEFO(tx, {
+        branchId: fromBranchId,
+        materialId,
+        qty,
+        type: 'out',
+        note: `โอนไป ${to.name}${extra}`,
+        staffId: req.staff.id,
+        materialName: material.name,
+        forWhat: 'โอน',
       });
 
-      if (!source || Number(source.qty) < qty) {
-        throw new Error(`วัตถุดิบ "${material.name}" ของ ${from.name} ไม่พอสำหรับโอน`);
-      }
-
-      await tx.branchStockRaw.update({
-        where: { branchId_materialId: { branchId: fromBranchId, materialId } },
-        data: { qty: { decrement: qty } },
-      });
-
-      await tx.branchStockRaw.upsert({
-        where: { branchId_materialId: { branchId: toBranchId, materialId } },
-        update: { qty: { increment: qty } },
-        create: { branchId: toBranchId, materialId, qty },
-      });
-
-      await tx.rawMaterialLog.create({
-        data: {
-          branchId: fromBranchId,
-          materialId,
-          type: 'out',
-          qty,
-          note: `โอนไป ${to.name}${extra}`,
-          staffId: req.staff.id,
-        },
-      });
-
-      await tx.rawMaterialLog.create({
-        data: {
+      for (const a of allocations) {
+        await receiveLot(tx, {
           branchId: toBranchId,
           materialId,
-          type: 'in',
-          qty,
+          qty: a.take,
+          lotNo: a.lot.lotNo,
+          expiresAt: a.lot.expiresAt,
+          receivedAt: a.lot.receivedAt,
+          supplier: a.lot.supplier,
+          unitCost: a.lot.unitCost,
           note: `รับโอนจาก ${from.name}${extra}`,
           staffId: req.staff.id,
-        },
-      });
+          merge: true,
+          allowPast: true,
+          // โอนล็อตเดิม: คงสถานะการเก็บ/วันหมดอายุเดิม ไม่คำนวณใหม่
+          storage: a.lot.storage || 'ambient',
+          frozenAt: a.lot.frozenAt,
+          thawedAt: a.lot.thawedAt,
+          expirySource: a.lot.expirySource,
+          autoExpiry: false,
+        });
+      }
 
       return { kind, item: material.name, qty, unit: material.unit, from: from.name, to: to.name };
     });
@@ -367,5 +527,8 @@ router.put('/ready/reorder', stockOnly, async (req, res) => {
 
   res.json(row);
 });
+
+// ---------- ล็อตวัตถุดิบ / ทิ้งของ / ตรวจนับ ----------
+router.use('/lots', require('./stockLots'));
 
 module.exports = router;

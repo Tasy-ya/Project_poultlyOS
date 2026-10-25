@@ -4,6 +4,8 @@ import Layout, { CATS, getStaff } from '../components/Layout'
 import BranchSelector from '../components/BranchSelector'
 import { api, getSelectedBranchId, onBranchChange } from '../api'
 import { getActiveBranches } from '../branch'
+import StockLots from '../components/StockLots'
+import PrepBatches from '../components/PrepBatches'
 
 export function StockCategoryPage() {
   return (
@@ -46,6 +48,7 @@ export default function StockPage() {
   const [tab, setTab] = useState(1)
   const [raw, setRaw] = useState([]), [mats, setMats] = useState([])
   const [batches, setBatches] = useState([]), [preps, setPreps] = useState([])
+  const [recipes, setRecipes] = useState([]), [usable, setUsable] = useState({})
   const [menus, setMenus] = useState([]), [ready, setReady] = useState({})
   const [f, setF] = useState({}), [msg, setMsg] = useState('')
   const [reorder, setReorder] = useState({})
@@ -60,6 +63,8 @@ export default function StockPage() {
     safe(api.getRawMaterials(category)).then(setMats)
     safe(api.getPrepBatches(b, category)).then(setBatches)
     safe(api.getPrepItems(category)).then(setPreps)
+    safe(api.getPrepRecipes()).then(r => setRecipes(Array.isArray(r) ? r : []))
+    safe(api.getRawLotSummary(b)).then(r => setUsable(Object.fromEntries(((r && r.rows) || []).map(x => [x.materialId, Number(x.usableQty)]))))
     safe(api.getMenus(category, b)).then(setMenus)
     safe(api.getStock(b)).then(s => {
       const list = Array.isArray(s) ? s : []
@@ -79,7 +84,30 @@ export default function StockPage() {
   async function run(fn) {
     try { await fn(); setMsg('✅ บันทึกแล้ว → ' + (branchName || 'สาขาที่เลือก')); setF({}); load() } catch (e) { setMsg('❌ ' + e.message) }
   }
-  const tabs = ['1 ดิบ', '2 หมัก', '3 พร้อมขาย', '4 โอนสาขา']
+  const tabs = ['1 ดิบ', '2 หมัก', '3 พร้อมขาย', '4 โอนสาขา', '5 ล็อต']
+
+  // รอบ 15: สถานะการเก็บ + อายุมาตรฐาน -> บอกพนักงานว่าระบบจะตั้งวันหมดอายุให้เท่าไร
+  const STORAGE_LABEL = { ambient: 'อุณหภูมิห้อง', chilled: 'แช่เย็น', frozen: 'แช่แข็ง' }
+  const storage = f.storage || 'frozen' // ของทั้งหมดแช่แข็ง (ไก่/เป็ด CP)
+  const today = new Date().toISOString().slice(0, 10)
+
+  // หมักได้สูงสุดกี่ตัว = ต่ำสุดของ (วัตถุดิบที่ใช้ได้ ÷ ปริมาณต่อ 1 ตัว) ของทุกวัตถุดิบในสูตร
+  const prepCapacity = prepItemId => {
+    const rows = recipes.filter(r => r.prepItemId === Number(prepItemId))
+
+    if (!rows.length) return { max: null, rows: [] }
+
+    const lines = rows.map(r => ({
+      name: r.material?.name || `วัตถุดิบ #${r.materialId}`,
+      unit: r.material?.unit || '',
+      per: r.qtyPerUnit,
+      have: usable[r.materialId] || 0,
+    }))
+    const max = Math.max(0, Math.floor(Math.min(...lines.map(l => (l.per > 0 ? l.have / l.per + 1e-9 : Infinity)))))
+
+    return { max, rows: lines }
+  }
+  const selCap = f.prepItemId ? prepCapacity(f.prepItemId) : null
 
   return (
     <Layout title="Stock" back={false} right={<BranchSelector compact />}>
@@ -109,15 +137,69 @@ export default function StockPage() {
             <option value="">เลือกวัตถุดิบ</option>{mats.map(m => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}</select>
           <input type="number" placeholder="จำนวน" value={f.qty || ''} onChange={e => setF({ ...f, qty: e.target.value })} />
           <input type="number" placeholder="ราคารวมที่ซื้อ (บาท)" value={f.price || ''} onChange={e => setF({ ...f, price: e.target.value })} />
-          <button className="btn-primary" onClick={() => run(() => api.receiveRaw({ branchId: Number(b), materialId: Number(f.materialId), qty: Number(f.qty), note: f.price ? `ราคา ${f.price} บาท` : undefined }))}>รับเข้า</button>
+          <input placeholder="เลขล็อต (เว้นว่าง = ระบบสร้างให้)" value={f.lotNo || ''} onChange={e => setF({ ...f, lotNo: e.target.value })} />
+          <input placeholder="ซัพพลายเออร์ (ถ้ามี)" value={f.supplier || ''} onChange={e => setF({ ...f, supplier: e.target.value })} />
+          <label><small>วันที่รับสินค้าเข้า (ระบบจะเบิกของที่รับเข้าก่อนออกก่อน)</small></label>
+          <input type="date" max={today} value={f.receivedAt || today} onChange={e => setF({ ...f, receivedAt: e.target.value })} />
+          <details style={{ margin: '6px 0' }}>
+            <summary><small>ตั้งค่าเพิ่มเติม (ไม่บังคับ)</small></summary>
+            <label><small>สถานะการเก็บ</small></label>
+            <select value={storage} onChange={e => setF({ ...f, storage: e.target.value })}>
+              {Object.entries(STORAGE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <label><small>วันหมดอายุตามฉลาก (ถ้ามี — ไม่ใส่ก็ได้ ระบบไม่ใช้เรียงลำดับเบิก)</small></label>
+            <input type="date" value={f.expiresAt || ''} onChange={e => setF({ ...f, expiresAt: e.target.value })} />
+          </details>
+          <button className="btn-primary" onClick={() => run(() => api.receiveRaw({
+            branchId: Number(b),
+            materialId: Number(f.materialId),
+            qty: Number(f.qty),
+            note: f.price ? `ราคา ${f.price} บาท` : undefined,
+            lotNo: f.lotNo || undefined,
+            receivedAt: new Date(`${f.receivedAt || today}T08:00:00`).toISOString(),
+            storage,
+            supplier: f.supplier || undefined,
+            expiresAt: f.expiresAt ? new Date(`${f.expiresAt}T23:59:59`).toISOString() : undefined,
+          }))}>รับเข้า (สร้างล็อตใหม่)</button>
         </div></>}
 
       {tab === 2 && <>
-        {batches.map(x => <div className="card" key={x.id}>{x.prepItem.name} #{x.batchNo || x.id}: <b>เหลือ {Number(x.qtyRemaining)} / {Number(x.qtyProduced)}</b>
-          {x.expiresAt && <div><small>หมดอายุ {new Date(x.expiresAt).toLocaleString('th-TH')}</small></div>}</div>)}
+        <PrepBatches batches={batches} onChanged={load} />
+        <div className="card gray"><b>วัตถุดิบที่ใช้หมักได้ตอนนี้</b>
+          <small>นับเฉพาะของที่ยังไม่หมดอายุ</small>
+          {preps.length === 0 && <small>ยังไม่มีสูตรหมัก</small>}
+          {preps.map(p => {
+            const cap = prepCapacity(p.id)
+
+            return (
+              <div key={p.id} style={{ borderTop: '1px solid #ccc', padding: '6px 0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <span>{p.name}</span>
+                  <b style={{ color: cap.max === 0 ? '#c62828' : undefined }}>
+                    {cap.max == null ? 'ยังไม่ได้ตั้งสูตร' : `หมักได้ ${cap.max} ${p.unit || 'ตัว'}`}
+                  </b>
+                </div>
+                {cap.rows.map(l => (
+                  <small key={l.name} style={{ display: 'block' }}>
+                    {l.name}: ใช้ได้ {l.have} {l.unit} (ใช้ {l.per} ต่อ 1 {p.unit || 'ตัว'})
+                  </small>
+                ))}
+              </div>
+            )
+          })}
+        </div>
         <div className="card gray"><b>เริ่มหมัก (ตัดวัตถุดิบดิบตามสูตร)</b>
           <select value={f.prepItemId || ''} onChange={e => setF({ ...f, prepItemId: e.target.value })}>
             <option value="">เลือกสูตรหมัก</option>{preps.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+          {selCap && selCap.max != null && (
+            <small style={{ display: 'block', color: Number(f.qty) > selCap.max ? '#c62828' : undefined }}>
+              หมักได้สูงสุด {selCap.max} ตัว
+              {Number(f.qty) > selCap.max ? ' — วัตถุดิบไม่พอสำหรับจำนวนที่ใส่ ต้องรับของเข้าเพิ่มก่อน' : ''}
+              {selCap.max > 0 && (
+                <button type="button" className="btn-outline" style={{ width: 'auto', padding: '2px 10px', marginLeft: 8 }} onClick={() => setF({ ...f, qty: String(selCap.max) })}>ใส่เท่าที่หมักได้</button>
+              )}
+            </small>
+          )}
           <input type="number" placeholder="จำนวนที่หมัก (ตัว)" value={f.qty || ''} onChange={e => setF({ ...f, qty: e.target.value })} />
           <button className="btn-primary" onClick={() => run(() => api.startPrep({ branchId: Number(b), prepItemId: Number(f.prepItemId), qtyProduced: Number(f.qty) }))}>เริ่มหมัก</button>
         </div></>}
@@ -185,6 +267,8 @@ export default function StockPage() {
             })
           })}>โอนสต็อก</button>
         </div></>}
+
+      {tab === 5 && <StockLots branchId={b} branchName={branchName} category={category} materials={mats} onChanged={load} />}
     </Layout>
   )
 }

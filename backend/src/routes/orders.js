@@ -1,6 +1,10 @@
 const express = require('express');
 const prisma = require('../db');
+const { Prisma } = require('@prisma/client');
 const { requireAuth, requireDept } = require('../middleware/auth');
+const { livePromotions, minQtyOf } = require('../lib/shopPromotions');
+const slips = require('../lib/slips');
+const slipAI = require('../lib/slipAI');
 
 // ออเดอร์/ประวัติ สำหรับฝ่ายขาย (และ Admin) เท่านั้น
 const salesOnly = [requireAuth, requireDept('sales')];
@@ -314,6 +318,8 @@ router.post('/', salesOnly, async (req, res) => {
 
             menuId: Number(item.menuId),
 
+            menuName: menu.name,
+
             size: itemSize,
 
             qty: Number(item.qty),
@@ -336,9 +342,39 @@ router.post('/', salesOnly, async (req, res) => {
         let discount = 0;
 
         let promo = null;
+        let shopPromo = null;
 
+        // โปรโมชั่นจากหน้าแอดมิน /admin/promotions (shop_promotions)
+        // ใช้เฉพาะโปรโมชั่นที่กำลังใช้งานและเปิดให้พนักงานเห็น
+        const shopPromos = await livePromotions(tx, Number(branchId), 'staff');
+        for (const candidate of shopPromos) {
+          const type = String(candidate.type || '').toLowerCase();
+          const pricing = candidate.pricing || {};
+          const discountType = String(pricing.discountType || 'percent').toLowerCase();
+          const value = Number(pricing.discountValue || 0);
+          const productName = String(candidate.productName || '').trim();
+          if (!['discount', 'bulk', 'festival', 'other'].includes(type) || value <= 0) continue;
+          const eligible = lineItems.filter(li =>
+            !productName || String(li.menuName || '').trim() === productName
+          );
+          if (!eligible.length) continue;
+          const eligibleQty = eligible.reduce((sum, li) => sum + Number(li.qty || 0), 0);
+          // ใช้เฉพาะช่อง "ซื้อตั้งแต่ (ตัว)" ที่แอดมินกรอก ไม่เดาจากข้อความในคำอธิบาย
+          const minQty = minQtyOf(candidate);
+          // จำนวนขั้นต่ำมีผลกับทั้งประเภท “ซื้อจำนวนมาก” และ “ลดราคา”
+          if (minQty > 0 && eligibleQty < minQty) continue;
+          if (!['percent', 'baht'].includes(discountType)) continue;
+          const eligibleSubtotal = eligible.reduce((sum, li) => sum + Number(li.lineTotal || 0), 0);
+          discount = Math.min(eligibleSubtotal, Math.max(0,
+            discountType === 'baht'
+              ? value
+              : Math.round(eligibleSubtotal * value) / 100
+          ));
+          shopPromo = candidate;
+          if (discount > 0) break;
+        }
 
-        if (promotionId) {
+        if (promotionId && discount <= 0) {
 
           promo =
             await tx.promotion.findUnique({
@@ -838,5 +874,60 @@ router.post(
   }
 );
 
+
+
+// =====================================================
+// POST /api/orders/:id/slip — พนักงานส่งสลิปที่ถ่ายจากกล้อง
+// =====================================================
+const staffSlipBody = express.raw({
+  type: ['image/jpeg', 'image/png', 'image/webp', 'application/octet-stream'],
+  limit: '7mb',
+});
+
+router.post('/:id/slip', salesOnly, staffSlipBody, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'รหัสออเดอร์ไม่ถูกต้อง' });
+  try {
+    const order = await prisma.order.findUnique({ where: { id } });
+    if (!order) return res.status(404).json({ error: 'ไม่พบออเดอร์' });
+    if (order.orderChannel === 'online') return res.status(409).json({ error: 'ออเดอร์ออนไลน์ต้องส่งสลิปผ่านระบบลูกค้า' });
+    if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'ไม่พบภาพสลิป กรุณาถ่ายใหม่แล้วกดส่งยืนยัน' });
+
+    const name = slips.saveSlip(req.body);
+    const old = order.slipUrl;
+    await prisma.order.update({
+      where: { id },
+      data: {
+        slipUrl: name,
+        slipUploadedAt: new Date(),
+        slipHash: slips.sha256(req.body),
+        slipAi: Prisma.DbNull,
+        slipAiAt: null,
+      },
+    });
+    if (old) slips.removeSlip(old);
+    res.json({ ok: true, slipUploaded: true, orderId: id });
+  } catch (err) {
+    console.error('POST /orders/:id/slip error:', err);
+    res.status(err.status || 400).json({ error: err.message || 'บันทึกสลิปไม่สำเร็จ' });
+  }
+});
+
+// =====================================================
+// POST /api/orders/:id/ai-check-slip — ใช้ AI ตรวจสลิปออเดอร์หน้าร้าน
+// =====================================================
+router.post('/:id/ai-check-slip', salesOnly, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'รหัสออเดอร์ไม่ถูกต้อง' });
+  try {
+    const order = await prisma.order.findUnique({ where: { id } });
+    if (!order || order.orderChannel === 'online') return res.status(404).json({ error: 'ไม่พบออเดอร์หน้าร้าน' });
+    const result = await slipAI.runCheck('order', id);
+    res.json({ ok: true, result });
+  } catch (err) {
+    console.error('POST /orders/:id/ai-check-slip error:', err);
+    res.status(err.status || 500).json({ error: err.message || 'AI ตรวจสลิปไม่สำเร็จ' });
+  }
+});
 
 module.exports = router;

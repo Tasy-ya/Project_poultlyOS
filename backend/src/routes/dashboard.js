@@ -7,6 +7,13 @@ const router = express.Router();
 async function menuCostPerUnit(menuId, cache) {
   if (cache.has(menuId)) return cache.get(menuId);
 
+  // ต้นทุนที่แอดมินกำหนดไว้ที่เมนู (ถ้ามี) ใช้ก่อนสูตรวัตถุดิบ
+  const menuRow = await prisma.menu.findUnique({ where: { id: menuId }, select: { cost: true } });
+  if (menuRow && Number(menuRow.cost) > 0) {
+    cache.set(menuId, Number(menuRow.cost));
+    return Number(menuRow.cost);
+  }
+
   const recipe = await prisma.menuRecipe.findMany({ where: { menuId } });
   let cost = 0;
 

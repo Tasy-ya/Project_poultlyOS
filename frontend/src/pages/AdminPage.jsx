@@ -7,6 +7,8 @@ import {
   onBranchChange,
 } from '../api'
 import BranchSelector from '../components/BranchSelector'
+import AdminCustomerInbox from '../components/AdminCustomerInbox'
+import AdminBottomNav from '../components/AdminBottomNav'
 
 // =====================================================
 // DATE
@@ -898,6 +900,12 @@ export default function AdminPage() {
             ↻ รีเฟรช
           </button>
         </div>
+
+        {/* =================================================
+            ออเดอร์/การจองจากลูกค้า (ขึ้นอัตโนมัติเมื่อลูกค้าสั่ง)
+        ================================================= */}
+
+        <AdminCustomerInbox branchId={branchId} />
 
         {/* =================================================
             FILTER
@@ -2051,114 +2059,8 @@ export default function AdminPage() {
         )}
       </div>
 
-      {/* =====================================================
-          ADMIN BOTTOM NAV
-      ===================================================== */}
-
-      <div
-        style={{
-          position:
-            'fixed',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: 72,
-          background:
-             '#ff1111',
-          display:
-            'flex',
-          justifyContent:
-            'center',
-          zIndex: 1000,
-          boxShadow:
-            '0 -2px 10px rgba(0,0,0,0.12)',
-        }}
-      >
-        <div
-          style={{
-            width: '100%',
-            maxWidth: 2000,
-            display:
-              'grid',
-            gridTemplateColumns:
-              'repeat(5, 1fr)',
-                alignItems: 'stretch',
-          }}
-        >
-
-          {/* หน้าหลัก */}
-
-          <Link
-            to="/admin"
-            style={bottomNavStyle(
-              '/admin',
-              700
-            )}
-          >
-            <HomeIcon size={26} />
-            <span>
-              หน้าหลัก
-            </span>
-          </Link>
-
-          {/* ประวัติ */}
-
-          <Link
-            to="/admin/sales"
-            style={bottomNavStyle(
-              '/admin/sales'
-            )}
-          >
-            <ReceiptIcon size={27} />
-            <span>
-              ประวัติการขาย
-            </span>
-          </Link>
-
-          {/* สินค้า */}
-
-          <Link
-            to="/admin/products"
-            style={bottomNavStyle(
-              '/admin/products'
-            )}
-          >
-            <ShoppingBagIcon size={26} />
-            <span>
-              แก้ไขสินค้า
-            </span>
-          </Link>
-
-          {/* โปรโมชั่น */}
-
-          <Link
-            to="/admin/promotions"
-            style={bottomNavStyle(
-              '/admin/promotions'
-            )}
-          >
-            <GiftIcon size={26} />
-            <span>
-              โปรโมชั่น
-            </span>
-          </Link>
-
-          {/* สาขา */}
-
-          <Link
-            to="/admin/branches"
-            style={bottomNavStyle(
-              '/admin/branches'
-            )}
-          >
-            <BuildingIcon size={26} />
-            <span>
-              จัดการสาขา
-            </span>
-          </Link>
-
-        </div>
-      </div>
+      {/* แถบเมนูล่างของ Admin (ใช้ร่วมกันทุกหน้า) */}
+      <AdminBottomNav />
     </div>
   )
 }

@@ -37,6 +37,214 @@
 
 /* Checkout fulfillment selector icon updates */
 .shop .seg button { display:flex; align-items:center; justify-content:center; gap:7px; }
-.shop .fulfillment-icon { display:inline-flex; align-items:center; justify-content:center; font-size:20px; line-height:1; }
+.shop .fulfillment-icon { display:inline-block; width:26px; height:26px; background-color:currentColor; -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat; -webkit-mask-position:center; mask-position:center; -webkit-mask-size:contain; mask-size:contain; flex:none; }
 .shop .payment-qr img { display:block; width:220px; max-width:100%; height:auto; margin:12px auto; image-rendering:auto; }
 .shop .payment-qr small { display:block; line-height:1.5; }
+
+
+/* ===== ราคาสินค้าเด่นชัด (หน้าเลือกสินค้า) ===== */
+.shop .price-tag { display: flex; align-items: baseline; gap: 6px; margin: 4px 0 6px; }
+.shop .price-amount { font-size: 26px; font-weight: 800; color: var(--red); line-height: 1.1; letter-spacing: .2px; }
+.shop .price-unit { font-size: 14px; font-weight: 700; color: #444; }
+
+/* ===== โปรโมชั่น: ลิงก์ Facebook ===== */
+.shop .promotion-links { display: grid; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #f0c9a0; }
+.shop .promotion-links a { color: #1a5fd0; font-weight: 700; font-size: 14px; text-decoration: none; }
+.shop .promotion-links a:hover { text-decoration: underline; }
+
+/* ===== สรุปยอดหน้า Checkout ===== */
+.shop .total-row { font-size: 18px; margin-top: 2px; }
+.shop .total-amount { font-size: 28px; font-weight: 800; color: var(--red); }
+.shop .pay-now-amount { font-size: 20px; font-weight: 800; color: var(--red); }
+.shop .pay-info { background: #f1f6ff; border: 1px solid #cfe0ff; border-radius: 14px; padding: 12px 14px; margin: 8px 0 12px; text-align: center; }
+.shop .pay-info-line { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; color: #234; }
+.shop .pay-info-badge { background: #1b3f8b; color: #fff; border-radius: 6px; padding: 2px 8px; font-weight: 800; font-size: 12px; }
+.shop .pay-info-amount { font-size: 32px; font-weight: 800; color: var(--red); margin: 6px 0 2px; }
+.shop .pay-info small { color: #556; }
+
+/* ===== หน้าสแกน QR ชำระเงิน (สไตล์แอปส่งอาหาร) ===== */
+.shop .pay-amount { text-align: center; background: linear-gradient(180deg, #fff3f2, #fff); border: 1px solid #ffd0cc; border-radius: 16px; padding: 16px 12px; margin-bottom: 12px; }
+.shop .pay-amount-label { font-size: 14px; color: #666; font-weight: 700; }
+.shop .pay-amount-value { font-size: 46px; font-weight: 900; color: var(--red); line-height: 1.1; margin: 4px 0; }
+.shop .pay-amount-ref { font-size: 12px; color: #888; }
+.shop .pay-qr-card { background: #fff; border: 2px solid #1b3f8b; border-radius: 18px; padding: 0 0 14px; margin: 0 0 12px; text-align: center; overflow: hidden; }
+.shop .pay-qr-head { display: flex; align-items: center; justify-content: center; gap: 10px; background: #1b3f8b; color: #fff; padding: 10px; font-weight: 700; }
+.shop .pay-qr-badge { background: #fff; color: #1b3f8b; border-radius: 6px; padding: 2px 10px; font-weight: 900; }
+.shop .pay-qr-svg { display: block; width: min(300px, 80%); height: auto; margin: 14px auto 8px; image-rendering: pixelated; }
+.shop .pay-qr-account { display: grid; gap: 2px; font-size: 14px; color: #333; }
+.shop .pay-qr-amount { font-size: 28px; font-weight: 900; color: var(--red); margin: 6px 0 2px; }
+.shop .pay-qr-card small { display: block; color: #777; padding: 0 12px; }
+.shop .pay-save { display: block; width: calc(100% - 28px); margin: 12px 14px 0; }
+.shop .pay-steps { margin: 6px 0 10px; padding-left: 22px; font-size: 14px; line-height: 1.6; color: #333; }
+
+
+/* ===== รอบ 8: หมายเหตุรายเมนู / แผนที่ปักหมุด / สลิป / สถานะออเดอร์ / รีวิว ===== */
+.shop .topbar-actions { display: flex; align-items: center; gap: 4px; }
+.shop .shop-modal-phone { margin: 4px 0 8px; font-size: 18px; font-weight: 800; }
+.shop .shop-modal-phone a { color: var(--red); text-decoration: none; }
+
+.shop .field-label { display: block; font-size: 13px; font-weight: 700; color: #444; margin: 8px 0 4px; }
+.shop .line-note { color: #b3261e; font-size: 12px; font-weight: 700; margin-top: 2px; }
+
+.shop .note-box { margin: 8px 0 4px; }
+.shop .note-box-label { display: block; font-size: 12px; font-weight: 700; color: #666; margin-bottom: 4px; }
+.shop .note-box input { width: 100%; box-sizing: border-box; border: 1px solid #ccc; border-radius: 10px; padding: 8px 10px; font: inherit; font-size: 13px; }
+.shop .note-chips { display: flex; gap: 6px; margin-bottom: 6px; }
+.shop .note-chips button { border: 1.5px solid var(--red); background: #fff; color: var(--red); border-radius: 16px; padding: 4px 12px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.shop .note-chips button.on { background: var(--red); color: #fff; }
+
+.shop .map-picker { display: grid; gap: 8px; margin: 6px 0 10px; }
+.shop .map-picker-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+.shop .map-picker-bar .btn-outline { flex: 1; min-width: 150px; text-align: center; text-decoration: none; padding: 9px 12px; }
+.shop .map-picker-canvas { width: 100%; height: 280px; border-radius: 12px; overflow: hidden; border: 1px solid #ddd; background: #eef2f5; z-index: 0; }
+
+.shop .slip-box { border: 2px dashed #1b3f8b; background: #f6f9ff; border-radius: 14px; padding: 12px; margin: 10px 0; display: grid; gap: 8px; }
+.shop .slip-box h4 { margin: 0; }
+.shop .slip-preview { display: block; max-width: 100%; max-height: 300px; margin: 0 auto; border-radius: 10px; border: 1px solid #ddd; object-fit: contain; background: #fff; }
+.shop .slip-done { background: #e6f6ea; color: #1b6b2a; border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; font-size: 14px; }
+
+.shop .tracker-card { border: 1px solid #ffd0cc; background: #fff7f5; border-radius: 14px; padding: 12px; margin: 8px 0 12px; }
+.shop .tracker-title { font-weight: 800; margin-bottom: 8px; text-align: center; }
+.shop .tracker { display: flex; justify-content: space-between; gap: 4px; position: relative; margin: 8px 0 4px; }
+.shop .tracker::before { content: ''; position: absolute; top: 15px; left: 16%; right: 16%; height: 3px; background: #e3e3e3; z-index: 0; }
+.shop .tracker-step { flex: 1; display: grid; justify-items: center; gap: 4px; position: relative; z-index: 1; text-align: center; }
+.shop .tracker-dot { width: 32px; height: 32px; border-radius: 50%; background: #e3e3e3; color: #888; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; }
+.shop .tracker-label { font-size: 12px; color: #888; font-weight: 700; line-height: 1.25; }
+.shop .tracker-step.done .tracker-dot { background: #1f9d4d; color: #fff; }
+.shop .tracker-step.done .tracker-label { color: #1b6b2a; }
+.shop .tracker-step.active .tracker-dot { background: var(--red); color: #fff; box-shadow: 0 0 0 5px #e8281f26; }
+.shop .tracker-step.active .tracker-label { color: var(--red); }
+.shop .tracker-ready { margin-top: 10px; background: #d9f2dc; color: #1b6b2a; border-radius: 10px; padding: 8px; text-align: center; font-weight: 800; font-size: 14px; }
+
+.shop .review-box { border: 1px solid #f3e3b8; background: #fffaf0; border-radius: 14px; padding: 12px; margin: 12px 0; display: grid; gap: 8px; }
+.shop .review-box h4 { margin: 0; }
+.shop .review-box p { margin: 0; font-size: 14px; }
+.shop .review-stars { font-size: 28px; color: #f5a100; letter-spacing: 2px; line-height: 1; }
+.shop .review-stars .off { color: #ddd; }
+.shop .review-stars.pick { display: flex; gap: 4px; justify-content: center; }
+.shop .review-stars.pick button { border: 0; background: none; font-size: 38px; line-height: 1; color: #ddd; cursor: pointer; padding: 0 2px; }
+.shop .review-stars.pick button.on { color: #f5a100; }
+
+.shop .order-card { background: #fff; border: 1px solid #eee; box-shadow: 0 1px 4px #0001; }
+.shop .order-items { font-size: 13px; color: #555; margin: 4px 0 8px; }
+.shop .order-link { display: block; text-align: center; text-decoration: none; margin-top: 8px; padding: 10px; }
+.shop .order-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; font-size: 14px; }
+.shop .order-actions a { color: var(--red); font-weight: 700; text-decoration: none; }
+
+/* ===== รอบ 8: หมายเหตุ / สถานะออเดอร์ / สลิป / รีวิว / แผนที่ ===== */
+.shop .note-box { margin: 6px 0 2px; }
+.shop .note-box input { width: 100%; box-sizing: border-box; border: 1px solid #ddd; border-radius: 12px; padding: 8px 10px; font: inherit; font-size: 13px; background: #fffdf8; }
+.shop .note-chips { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+.shop .note-chips button { border: 1px solid #e3c9a6; background: #fff; color: #7a4a10; border-radius: 16px; padding: 4px 12px; font-size: 13px; font-weight: bold; cursor: pointer; }
+.shop .note-chips button.on { background: var(--yellow); border-color: var(--yellow); color: #4a2d00; }
+
+.shop .tracker { background: #fff; border: 1px solid #eee; border-radius: 14px; padding: 14px 10px 12px; margin: 10px 0; }
+.shop .tracker ol { list-style: none; display: flex; margin: 0 0 10px; padding: 0; }
+.shop .tracker li { flex: 1; text-align: center; position: relative; color: #aaa; font-size: 12px; }
+.shop .tracker li:not(:last-child)::after { content: ''; position: absolute; top: 17px; left: 58%; width: 84%; height: 3px; background: #e5e5e5; z-index: 0; }
+.shop .tracker li.done:not(:last-child)::after { background: #2e9e4a; }
+.shop .tracker .dot { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; background: #eee; color: #9a9a9a; }
+.shop .tracker .dot svg { display: block; width: 20px; height: 20px; }
+.shop .tracker li.done { color: #1b6b2a; font-weight: bold; }
+.shop .tracker li.done .dot { background: #d9f2dc; color: #1b6b2a; }
+.shop .tracker li.now { color: var(--red); font-weight: bold; }
+.shop .tracker li.now .dot { background: var(--yellow); box-shadow: 0 0 0 4px #ffe9a8; color: #222; }
+.shop .tracker .lbl { display: block; margin-top: 4px; }
+.shop .tracker-msg { text-align: center; font-size: 13px; color: #555; }
+
+.shop .slip-box { border: 2px dashed #e3b9b3; border-radius: 14px; padding: 12px; margin: 12px 0; background: #fffaf9; display: grid; gap: 8px; }
+.shop .slip-title { font-weight: 800; display: flex; align-items: center; gap: 8px; }
+.shop .slip-title svg { flex: none; }
+.shop .slip-preview { max-width: 100%; max-height: 260px; object-fit: contain; border-radius: 10px; border: 1px solid #eee; justify-self: center; }
+
+.shop .review-box { border: 1px solid #eee; border-radius: 14px; background: #fff; padding: 14px; margin: 12px 0; display: grid; gap: 8px; }
+.shop .stars { display: flex; gap: 4px; justify-content: center; }
+.shop .stars button { border: 0; background: none; font-size: 38px; line-height: 1; color: #ddd; cursor: pointer; padding: 0 2px; }
+.shop .stars button.on { color: #f5b301; }
+.shop .stars.done { color: #f5b301; font-size: 26px; letter-spacing: 3px; }
+
+.shop .map-picker { display: grid; gap: 8px; margin-bottom: 8px; }
+.shop .map-search { display: flex; gap: 6px; }
+.shop .map-search input { flex: 1; min-width: 0; margin: 0; }
+.shop .map-canvas { width: 100%; height: 280px; border-radius: 12px; overflow: hidden; border: 1px solid #ddd; background: #eef; z-index: 0; }
+.shop .map-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.shop .map-actions .btn-outline { flex: 1; text-align: center; white-space: nowrap; }
+.map-pin { font-size: 28px; line-height: 1; filter: drop-shadow(0 2px 2px #0005); background: none; border: 0; }
+
+/* ===== ช่องต้องการให้ส่ง (ตะกร้า + ชำระเงิน) ===== */
+.shop .delivery-box { margin-top: 14px; }
+.shop .delivery-box textarea { width: 100%; box-sizing: border-box; }
+.shop .field-label { display: block; font-weight: 700; font-size: 13px; margin: 10px 0 4px; }
+.shop .map-link { font-size: 13px; }
+.shop .map-link summary { cursor: pointer; color: var(--red); font-weight: 700; padding: 4px 0; }
+.shop .map-link .map-search { margin-top: 6px; }
+
+/* ===== รอบ 10: เตือนสต็อกในกล่องเมนู ===== */
+.shop .stock-badge { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0 2px; padding: 3px 10px; border-radius: 12px; font-size: 13px; font-weight: 800; line-height: 1.3; }
+.shop .stock-badge .stock-dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; }
+.shop .stock-badge.ok { background: #d9f2dc; color: #1b6b2a; }
+.shop .stock-badge.low { background: #fff1d6; color: #9a5b00; animation: stockPulse 1.8s ease-in-out infinite; }
+.shop .stock-badge.out { background: #fde8e8; color: #b00000; }
+@keyframes stockPulse { 50% { box-shadow: 0 0 0 4px #f5a10033; } }
+.shop .stock-hint { margin-top: 4px; font-size: 12px; color: #9a5b00; font-weight: 700; }
+.shop .btn-disabled { margin-top: 8px; width: 100%; padding: 10px; border: none; border-radius: 12px; background: #d6d6d6; color: #777; font-weight: 800; font-size: 14px; cursor: not-allowed; }
+.shop .qty-mini button:disabled, .shop .size-pick button:disabled { opacity: .35; cursor: not-allowed; }
+.shop .btn-outline:disabled { opacity: .4; cursor: not-allowed; }
+.shop .stock-warn { background: #fde8e8; color: #a11; border-radius: 10px; padding: 9px 12px; margin: 8px 0; font-size: 14px; font-weight: 700; }
+.shop .stock-warn small { display: block; font-weight: 400; margin-top: 2px; }
+.shop .cart-stock { margin-top: 6px; font-size: 13px; font-weight: 800; color: #b00000; }
+
+/* วันหยุดร้าน */
+.shop .closed-banner { background: #fde8e8; border: 1px solid #f0b4b4; color: #8a1c1c; border-radius: 12px; padding: 12px; margin: 10px 0; line-height: 1.5; font-size: 14px; }
+.shop .closed-banner b { display: block; font-size: 16px; margin-bottom: 2px; }
+.shop .closed-list { background: #fff7e6; border: 1px solid #f0d9a6; color: #6b4a00; border-radius: 12px; padding: 10px 12px; margin: 10px 0; font-size: 13px; line-height: 1.6; }
+.shop .closed-list b { display: block; margin-bottom: 2px; }
+.shop .seg button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* =====================================================
+   เดสก์ท็อป: ให้หน้าสั่งซื้อ/จองเต็มหน้าจอเหมือนหน้า Dashboard
+   (มือถือ ≤ 600px ยังพอดีหน้าจอเหมือนเดิม)
+   ===================================================== */
+@media (min-width: 601px) {
+  .shop.screen { max-width: none; width: 100%; margin: 0; }
+  .shop .cart-bar { max-width: none; left: 0; transform: none; width: 100%; padding-left: 32px; padding-right: 32px; }
+  .shop .topbar { padding-left: 32px; padding-right: 32px; }
+  .shop .content { padding: 16px 32px; }
+}
+
+/* ===== ที่อยู่ที่จำไว้ + เลือกตำแหน่งแบบ LINE MAN ===== */
+.shop .map-wrap { position: relative; }
+.shop .map-center-pin { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -100%); font-size: 38px; line-height: 1; pointer-events: none; z-index: 500; filter: drop-shadow(0 3px 2px #0005); transition: transform .15s ease; }
+.shop .map-center-pin.lift { transform: translate(-50%, calc(-100% - 10px)); }
+.shop .map-locate-fab { position: absolute; right: 10px; bottom: 10px; z-index: 500; width: 44px; height: 44px; border-radius: 50%; border: 0; background: #fff; color: var(--red); font-size: 24px; font-weight: 800; box-shadow: 0 2px 8px #0004; cursor: pointer; }
+.shop .map-locate-fab:disabled { opacity: .6; }
+
+.shop .loc-card { display: flex; align-items: center; gap: 10px; border: 1.5px solid var(--red); background: #fff7f5; border-radius: 14px; padding: 10px 12px; }
+.shop .loc-card-pin { font-size: 24px; flex: none; }
+.shop .loc-card-text { flex: 1; min-width: 0; }
+.shop .loc-card-addr { font-size: 14px; font-weight: 700; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.shop .loc-card-link { font-size: 12px; color: var(--red); text-decoration: none; font-weight: 700; }
+.shop .loc-card-change { flex: none; border: 1.5px solid var(--red); background: #fff; color: var(--red); border-radius: 18px; padding: 7px 16px; font-weight: 800; font-size: 14px; cursor: pointer; }
+.shop .loc-empty { display: grid; gap: 8px; }
+.shop .loc-empty .btn-primary, .shop .loc-empty .btn-outline { width: 100%; padding: 12px; }
+.shop .loc-now { margin-top: 8px; border: 0; background: none; color: var(--red); font-weight: 800; font-size: 14px; padding: 4px 0; cursor: pointer; }
+.shop .loc-now:disabled { opacity: .6; }
+
+.shop .loc-saved { margin: 10px 0 4px; }
+.shop .loc-saved-title { font-size: 13px; font-weight: 700; color: #666; margin-bottom: 4px; }
+.shop .loc-saved-row { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid #eee; }
+.shop .loc-saved-pick { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: flex-start; text-align: left; border: 0; background: none; padding: 9px 2px; cursor: pointer; font: inherit; font-size: 13px; color: #333; }
+.shop .loc-saved-addr { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; line-height: 1.4; }
+.shop .loc-saved-del { flex: none; border: 0; background: none; color: #999; font-size: 22px; line-height: 1; padding: 6px 10px; cursor: pointer; }
+
+.shop .loc-sheet { position: fixed; inset: 0; z-index: 40; background: #fff; display: flex; flex-direction: column; }
+.shop .loc-sheet-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; padding-top: calc(12px + env(safe-area-inset-top, 0px)); border-bottom: 1px solid #eee; font-size: 16px; }
+.shop .loc-sheet-close { border: 0; background: #eee; border-radius: 50%; width: 34px; height: 34px; font-size: 22px; line-height: 1; cursor: pointer; }
+.shop .loc-sheet .map-picker { flex: 1; display: flex; flex-direction: column; min-height: 0; margin: 0; padding: 10px 12px 0; box-sizing: border-box; }
+.shop .loc-sheet .map-wrap { flex: 1; min-height: 240px; }
+.shop .loc-sheet .map-canvas { height: 100%; }
+.shop .loc-sheet-foot { padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid #eee; display: grid; gap: 10px; background: #fff; }
+.shop .loc-sheet-addr { font-size: 14px; line-height: 1.45; font-weight: 700; min-height: 40px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.shop .loc-sheet-foot .btn-primary { width: 100%; padding: 13px; }
+.shop .loc-sheet-foot .btn-primary:disabled { background: #d6d6d6; color: #777; cursor: not-allowed; }
+.shop .loc-sheet-warn { margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; background: #fff7e6; border: 1px solid #f0d9a6; color: #6b4a00; font-size: 13px; line-height: 1.5; font-weight: 700; }

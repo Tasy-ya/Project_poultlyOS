@@ -178,6 +178,96 @@ function removeDuplicateMenus(menus) {
 // =====================================================
 // หน้าขาย
 // =====================================================
+// สต็อกเก็บเป็น "หน่วยครึ่งตัว" (เป็ด/ไก่ 1 ตัว = 2 หน่วย) — แสดงให้ตรงกับหน้าเดชบอร์ด
+function fmtStock(units, hasHalf) {
+  const q = Number(units || 0)
+
+  if (!hasHalf) return `${q} ชิ้น`
+
+  const whole = Math.floor(q / 2)
+
+  return q % 2 ? `${whole} ตัว + ครึ่ง` : `${whole} ตัว`
+}
+
+// =====================================================
+// ข้าวเหนียว: พนักงานขายบันทึกเอง (ซื้อมากี่ กก. / ทำได้กี่ถุง)
+// =====================================================
+function StickyRiceCard({ branchId, onSaved }) {
+  const [open, setOpen] = useState(false)
+  const [info, setInfo] = useState(null)
+  const [kg, setKg] = useState('')
+  const [price, setPrice] = useState('')
+  const [bags, setBags] = useState('')
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const loadInfo = () => {
+    if (!branchId) return
+    api.getStickyRice(branchId).then(setInfo).catch(() => setInfo(null))
+  }
+
+  useEffect(() => {
+    if (open) loadInfo()
+  }, [open, branchId])
+
+  const save = async () => {
+    setMsg('')
+    if (!(Number(kg) > 0) && !(Number(bags) > 0)) {
+      setMsg('❌ กรอกจำนวน กก. ที่ซื้อ หรือจำนวนถุงที่ทำได้ อย่างน้อย 1 อย่าง')
+      return
+    }
+    setBusy(true)
+    try {
+      await api.recordStickyRice({
+        branchId: Number(branchId),
+        kgBought: Number(kg) || 0,
+        price: Number(price) || 0,
+        bagsMade: Number(bags) || 0,
+      })
+      setKg('')
+      setPrice('')
+      setBags('')
+      setMsg('✅ บันทึกแล้ว')
+      loadInfo()
+      onSaved && onSaved()
+    } catch (err) {
+      setMsg('❌ ' + err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const box = { width: '100%', boxSizing: 'border-box', height: 42, borderRadius: 12, border: '1px solid #bbb', padding: '0 14px', fontSize: 15, marginTop: 8 }
+
+  return (
+    <div style={{ background: '#fff', border: '1px solid #ddd', borderRadius: 14, padding: 12, marginBottom: 12 }}>
+      <div onClick={() => setOpen(!open)} style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', cursor: 'pointer' }}>
+        <span> บันทึกข้าวเหนียว (ซื้อ / ทำเสร็จ)</span>
+        <span>{open ? '▲' : '▼'}</span>
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 8 }}>
+          {info && (
+            <small style={{ display: 'block', color: '#666' }}>
+              ตอนนี้: ข้าวเหนียวดิบ {Number(info.rawKg || 0)} {info.materialUnit || 'กก.'} · พร้อมขาย {Number(info.bags || 0)} ถุง
+            </small>
+          )}
+
+          <input type="number" inputMode="decimal" min="0" step="0.01" placeholder="ซื้อข้าวเหนียวมากี่ กก." value={kg} onChange={ev => setKg(ev.target.value)} style={box} />
+          <input type="number" inputMode="decimal" min="0" placeholder="ราคารวมที่ซื้อ (บาท) — ไม่บังคับ" value={price} onChange={ev => setPrice(ev.target.value)} style={box} />
+          <input type="number" inputMode="numeric" min="0" step="1" placeholder="ทำเสร็จกี่ถุง (เข้าสต็อกพร้อมขาย)" value={bags} onChange={ev => setBags(ev.target.value)} style={box} />
+
+          <button className="btn-primary" disabled={busy} onClick={save} style={{ marginTop: 10 }}>
+            {busy ? 'กำลังบันทึก...' : 'บันทึก'}
+          </button>
+          {msg && <div style={{ marginTop: 8, fontSize: 13 }}>{msg}</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function SellCategoryPage() {
 
   // =====================================================
@@ -210,6 +300,9 @@ export default function SellCategoryPage() {
 
   const [loading, setLoading] =
     useState(true)
+
+  // เพิ่มค่าเพื่อให้โหลดสต็อกใหม่หลังบันทึกข้าวเหนียว
+  const [refreshKey, setRefreshKey] = useState(0)
 
   // =====================================================
   // โหลดสินค้า + สต็อกของสาขาปัจจุบัน
@@ -359,7 +452,7 @@ export default function SellCategoryPage() {
     return () => {
       alive = false
     }
-  }, [branchId])
+  }, [branchId, refreshKey])
 
   // =====================================================
   // ซ่อมข้อมูลตะกร้า
@@ -541,10 +634,11 @@ export default function SellCategoryPage() {
         product
       )
 
+    // stockQty เก็บเป็นหน่วยครึ่งตัวอยู่แล้ว (ตรงกับที่เซิร์ฟเวอร์ตัด) จึงเทียบกับ stock ตรง ๆ
     return (
       used +
         requiredUnits <=
-      stock * 2
+      stock
     )
   }
 
@@ -864,6 +958,9 @@ export default function SellCategoryPage() {
         </div>
       )}
 
+      {/* ข้าวเหนียว: พนักงานขายบันทึกเอง */}
+      <StickyRiceCard branchId={branchId} onSaved={() => setRefreshKey(k => k + 1)} />
+
       {/* Loading */}
       {loading ? (
         <div className="receipt-box">
@@ -1005,10 +1102,10 @@ export default function SellCategoryPage() {
                         }}
                       >
                         คงเหลือ:{' '}
-                        {stock}{' '}
-                        {product.hasHalfOption
-                          ? 'ตัว'
-                          : 'ชิ้น'}
+                        {fmtStock(
+                          stock,
+                          product.hasHalfOption
+                        )}
                       </div>
 
                     </div>

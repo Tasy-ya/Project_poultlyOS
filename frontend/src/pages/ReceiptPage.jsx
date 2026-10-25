@@ -198,6 +198,20 @@ export default function ReceiptPage() {
         className="receipt-box"
         id="receipt-print"
       >
+        {state.slipUploaded && (
+          <div style={{ marginBottom: 12, padding: 12, borderRadius: 10, background: '#f5f7fa', fontSize: 13 }}>
+            <b>บันทึกสลิปพร้อมออเดอร์แล้ว</b>
+            <div>รหัสออเดอร์: {state.slipOrderId}</div>
+            {state.slipAi ? (
+              <div style={{ marginTop: 5, color: state.slipAi.verdict === 'pass' ? '#218838' : state.slipAi.verdict === 'fail' ? '#b91c1c' : '#946200' }}>
+                {state.slipAi.verdict === 'pass' ? 'AI ผ่านการตรวจเบื้องต้น' : state.slipAi.verdict === 'fail' ? 'AI พบความผิดปกติ กรุณาตรวจสอบ' : 'AI แนะนำให้ตรวจสลิปด้วยตนเอง'}
+              </div>
+            ) : (
+              <div style={{ marginTop: 5, color: '#946200' }}>{state.slipAiError || 'ยังไม่มีผลตรวจจาก AI กรุณาตรวจสอบด้วยตนเอง'}</div>
+            )}
+            <div>AI เป็นตัวช่วยคัดกรอง ไม่ใช่หลักฐานยืนยันว่าเงินเข้าบัญชีแล้ว</div>
+          </div>
+        )}
         {state.pending && (
           <div
             style={{

@@ -1,6 +1,6 @@
 const express = require('express')
 const prisma = require('../db')
-const { cutStock, lockBranch, supportsHalf } = require('../lib/orderCore')
+const { cutStock, lockBranch, supportsHalf, confirmOnlineOrder } = require('../lib/orderCore')
 const {
   requireAuth,
   requireAdmin,
@@ -408,27 +408,19 @@ router.post('/customer-orders/:id/confirm-payment', requireAuth, requireAdmin, a
   const orderId = Number(req.params.id)
   const bankReference = String(req.body?.bankReference || '').trim().slice(0, 100)
   if (!Number.isInteger(orderId)) return res.status(400).json({ error: 'รหัสออเดอร์ไม่ถูกต้อง' })
-  if (bankReference.length < 3) return res.status(400).json({ error: 'กรุณาระบุเลขอ้างอิง/หมายเหตุหลังตรวจสอบเงินเข้าจริงแล้ว' })
   try {
-    const result = await prisma.$transaction(async tx => {
-      const order = await tx.order.findUnique({
-        where: { id: orderId },
-        include: { items: { include: { menu: true } } },
+    // มีสลิปแนบแล้ว = ไม่บังคับกรอกเลขอ้างอิง / ไม่มีสลิป = ต้องระบุเลขอ้างอิงจากรายการเดินบัญชี
+    const slipRow = await prisma.order.findUnique({ where: { id: orderId }, select: { slipUrl: true } })
+    if (!slipRow?.slipUrl && bankReference.length < 3) {
+      return res.status(400).json({ error: 'กรุณาระบุเลขอ้างอิง/หมายเหตุหลังตรวจสอบเงินเข้าจริงแล้ว' })
+    }
+    const result = await prisma.$transaction(tx =>
+      confirmOnlineOrder(tx, orderId, {
+        staffId: req.staff.id,
+        reference: bankReference || 'ตรวจสลิปโดยแอดมิน',
+        label: 'แอดมินยืนยันออเดอร์ออนไลน์หลังตรวจสอบเงินเข้า',
       })
-      if (!order || order.orderChannel !== 'online') throw Object.assign(new Error('ไม่พบออเดอร์ออนไลน์'), { status: 404 })
-      if (order.status !== 'pending_payment') throw Object.assign(new Error('ออเดอร์นี้ไม่ได้อยู่ในสถานะรอตรวจสอบการชำระ'), { status: 409 })
-      if (!order.branchId) throw Object.assign(new Error('ออเดอร์ไม่มีข้อมูลสาขา'), { status: 400 })
-      await lockBranch(tx, order.branchId)
-      const lines = order.items.map(i => {
-        const halfOption = Boolean(i.menu?.hasHalfOption) || supportsHalf(i.menu?.category)
-        const size = i.size === 'half' && halfOption ? 'half' : 'full'
-        return { menuId: Number(i.menuId), name: i.menu?.name || 'สินค้า', qty: Number(i.qty), size, stockUnits: size === 'half' ? Number(i.qty) : Number(i.qty) * (halfOption ? 2 : 1) }
-      })
-      await cutStock(tx, { branchId: order.branchId, lines, orderId: order.id, receiptNo: order.receiptNo, staffId: req.staff.id, label: 'แอดมินยืนยันออเดอร์ออนไลน์หลังตรวจสอบเงินเข้า' })
-      await tx.payment.create({ data: { orderId: order.id, method: 'qr', amount: order.totalAmount, refNo: bankReference } })
-      const updated = await tx.order.update({ where: { id: order.id }, data: { status: 'completed', fulfillmentStatus: 'new' } })
-      return updated
-    })
+    )
     res.json({ ok: true, id: result.id, status: result.status, message: 'ยืนยันการชำระและตัดสต็อกแล้ว' })
   } catch (error) {
     const status = error.status || 500
